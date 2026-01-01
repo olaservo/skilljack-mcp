@@ -4,9 +4,10 @@ An MCP server that jacks [Agent Skills](https://agentskills.dev) directly into y
 
 ## Features
 
-- **Skill Discovery** - Automatically finds skills in a configured directory
+- **Dynamic Skill Discovery** - Discovers skills from MCP Roots (client workspace) or fallback directory
 - **Server Instructions** - Injects skill metadata into the client's system prompt
 - **Skill Tool** - Load full skill content on demand (progressive disclosure)
+- **Live Updates** - Re-discovers skills when workspace roots change
 
 ## Installation
 
@@ -16,6 +17,21 @@ npm run build
 ```
 
 ## Usage
+
+### With MCP Roots (Recommended)
+
+If your client supports MCP Roots (like Claude Code), skills are discovered automatically from your workspace:
+
+```bash
+# No arguments needed - discovers from client workspace
+skill-jack-mcp
+```
+
+The server scans `.claude/skills/` and `skills/` directories in each workspace root.
+
+### With Fallback Directory
+
+For clients without Roots support, or to provide a default skills location:
 
 ```bash
 # Pass skills directory as argument
@@ -32,24 +48,29 @@ skill-jack-mcp "C:/Users/you/skills"
 
 ## How It Works
 
-The server implements the Agent Skills progressive disclosure pattern:
+The server implements the Agent Skills progressive disclosure pattern with MCP Roots support:
 
-1. **At startup**: Discovers all skills and generates `<available_skills>` XML for server instructions
-2. **On connection**: Client receives skill metadata (name, description, location) in system prompt
-3. **On tool call**: Agent calls `skill` tool to load full SKILL.md content
+1. **On connection**: Server requests workspace roots from client (or uses fallback directory)
+2. **Discovery**: Scans roots for `.claude/skills/` and `skills/` directories
+3. **Instructions**: Generates `<available_skills>` XML with discovered skill metadata
+4. **On tool call**: Agent calls `skill` tool to load full SKILL.md content
+5. **Live updates**: Re-discovers when client's workspace roots change
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │ MCP Client connects                                      │
 │   ↓                                                      │
-│ Server returns capabilities + instructions               │
-│   • instructions = <available_skills> XML block          │
+│ Server requests roots from client                        │
+│   • Scans .claude/skills/ and skills/ in each root      │
+│   • Falls back to SKILLS_DIR if roots not supported      │
 │   ↓                                                      │
 │ LLM sees skill metadata in system prompt                 │
 │   ↓                                                      │
 │ LLM calls "skill" tool with skill name                   │
 │   ↓                                                      │
 │ Server returns full SKILL.md content                     │
+│   ↓                                                      │
+│ (Workspace changes → roots/list_changed → re-discover)   │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -133,20 +154,36 @@ This follows [MCP server instructions best practices](https://blog.modelcontextp
 
 ## Skill Discovery
 
-The server scans the provided directory for subdirectories containing a `SKILL.md` file:
+### From MCP Roots
+
+When the client supports roots, the server scans each workspace root for:
+- `{root}/.claude/skills/`
+- `{root}/skills/`
+
+### From Fallback Directory
+
+When roots aren't available, the server scans the configured directory.
+
+### Directory Structure
+
+Skills are subdirectories containing a `SKILL.md` file:
 
 ```
-skills/
+.claude/skills/           (or skills/)
 ├── skill-one/
-│   └── SKILL.md     ✓ Discovered
+│   └── SKILL.md         ✓ Discovered
 ├── skill-two/
-│   ├── SKILL.md     ✓ Discovered
+│   ├── SKILL.md         ✓ Discovered
 │   └── snippets/
 └── not-a-skill/
-    └── README.md    ✗ Ignored (no SKILL.md)
+    └── README.md        ✗ Ignored (no SKILL.md)
 ```
 
 Each `SKILL.md` must have valid YAML frontmatter with `name` and `description` fields.
+
+### Naming Conflicts
+
+If the same skill name exists in multiple roots, it's prefixed with the root name (e.g., `project-a:commit`).
 
 ## Testing
 
