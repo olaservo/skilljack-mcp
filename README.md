@@ -1,7 +1,5 @@
 # Skill Jack MCP
 
-*"I know kung fu."*
-
 An MCP server that jacks [Agent Skills](https://agentskills.dev) directly into your LLM's brain.
 
 ## Features
