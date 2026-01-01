@@ -20,7 +20,7 @@ npm run build
 
 ### With MCP Roots (Recommended)
 
-If your client supports MCP Roots (like Claude Code), skills are discovered automatically from your workspace:
+If your [MCP client supports Roots](https://modelcontextprotocol.io/clients), skills are discovered automatically from your workspace:
 
 ```bash
 # No arguments needed - discovers from client workspace
