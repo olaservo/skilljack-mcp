@@ -196,11 +196,6 @@ When a user's task matches a skill description below: 1) activate it, 2) follow 
 </available_skills>
 ```
 
-This follows [MCP server instructions best practices](https://blog.modelcontextprotocol.io/posts/2025-11-03-using-server-instructions/):
-- Concise, actionable guidance
-- No redundancy with tool descriptions
-- Focused on workflow relationships
-
 ## Skill Discovery
 
 ### From MCP Roots
@@ -212,23 +207,6 @@ When the client supports roots, the server scans each workspace root for:
 ### From Fallback Directory
 
 When roots aren't available, the server scans the configured directory.
-
-### Directory Structure
-
-Skills are subdirectories containing a `SKILL.md` file:
-
-```
-.claude/skills/           (or skills/)
-├── skill-one/
-│   └── SKILL.md         ✓ Discovered
-├── skill-two/
-│   ├── SKILL.md         ✓ Discovered
-│   └── snippets/
-└── not-a-skill/
-    └── README.md        ✗ Ignored (no SKILL.md)
-```
-
-Each `SKILL.md` must have valid YAML frontmatter with `name` and `description` fields.
 
 ### Naming Conflicts
 
@@ -242,21 +220,6 @@ npm run build
 
 # Test with MCP Inspector
 npx @modelcontextprotocol/inspector@latest node dist/index.js /path/to/skills
-```
-
-## Configuration for Claude Desktop
-
-Add to your `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "skill-jack": {
-      "command": "npx",
-      "args": ["skill-jack-mcp", "/path/to/skills"]
-    }
-  }
-}
 ```
 
 ## Related
