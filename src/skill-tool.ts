@@ -103,15 +103,15 @@ const SkillResourceSchema = z.object({
     .describe("Relative path (e.g., 'snippets/tool.ts'). Empty string lists all files."),
 });
 
-// Security constants
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB max file size
-const MAX_DIRECTORY_DEPTH = 10; // Prevent deeply nested traversal
+// Security constants (exported for reuse in skill-resources.ts)
+export const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB max file size
+export const MAX_DIRECTORY_DEPTH = 10; // Prevent deeply nested traversal
 
 /**
  * Check if a path is within the allowed base directory.
  * Uses fs.realpathSync to resolve symlinks and prevent symlink escape attacks.
  */
-function isPathWithinBase(targetPath: string, baseDir: string): boolean {
+export function isPathWithinBase(targetPath: string, baseDir: string): boolean {
   try {
     // Resolve symlinks to get the real paths
     const realBase = fs.realpathSync(baseDir);
@@ -132,7 +132,7 @@ function isPathWithinBase(targetPath: string, baseDir: string): boolean {
  * List files in a skill directory for discovery.
  * Limits recursion depth to prevent DoS from deeply nested directories.
  */
-function listSkillFiles(skillDir: string, subPath: string = "", depth: number = 0): string[] {
+export function listSkillFiles(skillDir: string, subPath: string = "", depth: number = 0): string[] {
   // Prevent excessive recursion
   if (depth > MAX_DIRECTORY_DEPTH) {
     return [];

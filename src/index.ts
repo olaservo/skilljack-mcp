@@ -18,6 +18,7 @@ import {
   createSkillMap,
 } from "./skill-discovery.js";
 import { registerSkillTool } from "./skill-tool.js";
+import { registerSkillResources } from "./skill-resources.js";
 
 /**
  * Get the skills directory from command line args or environment.
@@ -65,6 +66,7 @@ async function main() {
     {
       capabilities: {
         tools: {},
+        resources: { listChanged: true },
       },
       instructions,
     }
@@ -72,6 +74,9 @@ async function main() {
 
   // Register the skill tool
   registerSkillTool(server, skillMap);
+
+  // Register skill resources
+  registerSkillResources(server, skillMap);
 
   // Connect via stdio transport
   const transport = new StdioServerTransport();
