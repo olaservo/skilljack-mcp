@@ -5,7 +5,9 @@
  * complementing the model-controlled tool access.
  *
  * URI Scheme:
+ *   skill://                    -> Collection: all SKILL.md contents
  *   skill://{skillName}         -> SKILL.md content
+ *   skill://{skillName}/        -> Collection: all files in skill
  *   skill://{skillName}/{path}  -> File within skill directory
  */
 
@@ -51,6 +53,12 @@ export function registerSkillResources(
   server: McpServer,
   skillMap: Map<string, SkillMetadata>
 ): void {
+  // Register collection resource for all skills
+  registerAllSkillsCollection(server, skillMap);
+
+  // Register collection resources for each skill's files
+  registerSkillFileCollections(server, skillMap);
+
   // Register static resources for each skill's SKILL.md
   for (const [name, skill] of skillMap) {
     const uri = `skill://${encodeURIComponent(name)}`;
@@ -84,6 +92,102 @@ export function registerSkillResources(
 
   // Register resource template for skill files
   registerSkillFileTemplate(server, skillMap);
+}
+
+/**
+ * Register a collection resource that returns all skills at once.
+ *
+ * URI: skill://
+ *
+ * Returns multiple ResourceContents, one per skill, each with its own URI.
+ * This allows clients to fetch all skill content in a single request.
+ */
+function registerAllSkillsCollection(
+  server: McpServer,
+  skillMap: Map<string, SkillMetadata>
+): void {
+  server.registerResource(
+    "All Skills",
+    "skill://",
+    {
+      mimeType: "text/markdown",
+      description: "Collection of all available skills. Returns all SKILL.md contents in one request.",
+    },
+    async () => {
+      const contents = [];
+
+      for (const [name, skill] of skillMap) {
+        try {
+          const content = loadSkillContent(skill.path);
+          contents.push({
+            uri: `skill://${encodeURIComponent(name)}`,
+            mimeType: "text/markdown",
+            text: content,
+          });
+        } catch (error) {
+          // Skip skills that fail to load, but continue with others
+          console.error(`Failed to load skill "${name}":`, error);
+        }
+      }
+
+      return { contents };
+    }
+  );
+}
+
+/**
+ * Register collection resources for each skill's files.
+ *
+ * URI: skill://{skillName}/
+ *
+ * Returns all files within a skill directory in one request.
+ */
+function registerSkillFileCollections(
+  server: McpServer,
+  skillMap: Map<string, SkillMetadata>
+): void {
+  for (const [name, skill] of skillMap) {
+    const uri = `skill://${encodeURIComponent(name)}/`;
+    const skillDir = path.dirname(skill.path);
+
+    server.registerResource(
+      `${name} (all files)`,
+      uri,
+      {
+        mimeType: "text/plain",
+        description: `Collection of all files in the ${name} skill directory.`,
+      },
+      async () => {
+        const files = listSkillFiles(skillDir);
+        const contents = [];
+
+        for (const file of files) {
+          const fullPath = path.resolve(skillDir, file);
+
+          try {
+            const stat = fs.statSync(fullPath);
+
+            // Skip files that are too large
+            if (stat.size > MAX_FILE_SIZE) {
+              continue;
+            }
+
+            const content = fs.readFileSync(fullPath, "utf-8");
+            contents.push({
+              uri: `skill://${encodeURIComponent(name)}/${file}`,
+              mimeType: getMimeType(file),
+              text: content,
+            });
+          } catch (error) {
+            // Skip files that fail to read
+            console.error(`Failed to read "${file}" in skill "${name}":`, error);
+          }
+        }
+
+        return { contents };
+      }
+    );
+  }
 }
 
 /**
