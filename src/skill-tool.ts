@@ -201,7 +201,8 @@ function registerSkillResourceTool(
       title: "Read Skill File",
       description:
         "Read files referenced by skill instructions (scripts, snippets, templates). " +
-        "Use when skill instructions mention specific files to read or copy.",
+        "Use when skill instructions mention specific files to read or copy. " +
+        "Pass a directory path (e.g., 'templates') to read all files in that directory at once.",
       inputSchema: SkillResourceSchema,
       annotations: {
         readOnlyHint: true,
@@ -299,17 +300,47 @@ function registerSkillResourceTool(
         };
       }
 
-      // Handle directories
+      // Handle directories - return all file contents
       if (stat.isDirectory()) {
         const files = listSkillFiles(skillDir, resourcePath);
-        return {
-          content: [
-            {
+        if (files.length === 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Directory "${resourcePath}" is empty or contains no readable files.`,
+              },
+            ],
+          };
+        }
+
+        // Read all files and return as multiple content items
+        const contents: Array<{ type: "text"; text: string }> = [];
+        for (const file of files) {
+          const filePath = path.join(skillDir, file);
+          try {
+            const fileStat = fs.statSync(filePath);
+            if (fileStat.size > MAX_FILE_SIZE) {
+              contents.push({
+                type: "text",
+                text: `--- ${file} ---\n[File too large: ${(fileStat.size / 1024 / 1024).toFixed(2)}MB]`,
+              });
+            } else {
+              const fileContent = fs.readFileSync(filePath, "utf-8");
+              contents.push({
+                type: "text",
+                text: `--- ${file} ---\n${fileContent}`,
+              });
+            }
+          } catch (error) {
+            contents.push({
               type: "text",
-              text: `"${resourcePath}" is a directory. Files within:\n\n${files.map((f) => `- ${f}`).join("\n")}`,
-            },
-          ],
-        };
+              text: `--- ${file} ---\n[Error reading file: ${error instanceof Error ? error.message : "unknown error"}]`,
+            });
+          }
+        }
+
+        return { content: contents };
       }
 
       // Check file size to prevent memory exhaustion
