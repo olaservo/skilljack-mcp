@@ -220,6 +220,6 @@ npx @modelcontextprotocol/inspector@latest node dist/index.js /path/to/skills
 
 ## Related
 
-- [Agent Skills Specification](https://agentskills.dev)
+- [Agent Skills Specification](https://agentskills.io)
 - [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)
 - [Example MCP Clients](https://modelcontextprotocol.io/clients)
