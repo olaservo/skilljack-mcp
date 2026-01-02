@@ -20,11 +20,11 @@ src/
 
 ## Key Abstractions
 
-**SkillState** (skill-tool.ts:22) - Shared state for dynamic updates:
+**SkillState** - Shared state for dynamic updates:
 - `skillMap: Map<string, SkillMetadata>` - name → skill lookup
 - `instructions: string` - Generated XML for system prompt
 
-**SkillMetadata** (skill-discovery.ts:15) - Parsed skill info:
+**SkillMetadata** - Parsed skill info:
 - `name`, `description`, `path` (to SKILL.md)
 
 ## Architecture
