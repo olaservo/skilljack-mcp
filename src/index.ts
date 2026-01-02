@@ -7,7 +7,7 @@
  *
  * Usage:
  *   skill-jack-mcp                    # Uses roots from client
- *   skill-jack-mcp /path/to/skills    # Fallback directory
+ *   skill-jack-mcp /path/to/skills    # Skills directory
  *   SKILLS_DIR=/path/to/skills skill-jack-mcp
  */
 
@@ -26,10 +26,10 @@ import {
 } from "./subscriptions.js";
 
 /**
- * Get the fallback skills directory from command line args or environment.
- * This is now optional - skills can be discovered from client roots.
+ * Get the skills directory from command line args or environment.
+ * This directory is scanned at startup to populate server instructions.
  */
-function getFallbackSkillsDir(): string | null {
+function getSkillsDir(): string | null {
   // Check command line argument first
   const args = process.argv.slice(2);
   if (args.length > 0 && args[0] && !args[0].startsWith("-")) {
@@ -55,26 +55,26 @@ const skillState: SkillState = {
 };
 
 /**
- * Discover skills synchronously from fallback directory.
+ * Discover skills synchronously from configured directory.
  * Checks both the directory itself and SKILL_SUBDIRS subdirectories.
  * Used at startup to populate initial instructions before roots are available.
  */
-function discoverSkillsFromFallback(fallbackDir: string | null): ReturnType<typeof discoverSkills> {
-  if (!fallbackDir) {
+function discoverSkillsFromDir(skillsDir: string | null): ReturnType<typeof discoverSkills> {
+  if (!skillsDir) {
     return [];
   }
 
   const allSkills: ReturnType<typeof discoverSkills> = [];
 
-  // Check if the fallback directory itself contains skills
-  const directSkills = discoverSkills(fallbackDir);
+  // Check if the directory itself contains skills
+  const directSkills = discoverSkills(skillsDir);
   allSkills.push(...directSkills);
 
   // Also check SKILL_SUBDIRS subdirectories
   for (const subdir of SKILL_SUBDIRS) {
-    const skillsDir = path.join(fallbackDir, subdir);
-    if (fs.existsSync(skillsDir)) {
-      const subdirSkills = discoverSkills(skillsDir);
+    const subPath = path.join(skillsDir, subdir);
+    if (fs.existsSync(subPath)) {
+      const subdirSkills = discoverSkills(subPath);
       allSkills.push(...subdirSkills);
     }
   }
@@ -88,18 +88,18 @@ function discoverSkillsFromFallback(fallbackDir: string | null): ReturnType<type
 const subscriptionManager = createSubscriptionManager();
 
 async function main() {
-  const fallbackSkillsDir = getFallbackSkillsDir();
+  const skillsDir = getSkillsDir();
 
   // Log startup mode
-  if (fallbackSkillsDir) {
-    console.error(`Fallback skills directory: ${fallbackSkillsDir}`);
+  if (skillsDir) {
+    console.error(`Skills directory: ${skillsDir}`);
   } else {
-    console.error("No fallback skills directory configured (will use roots only)");
+    console.error("No skills directory configured (will use roots only)");
   }
 
   // Discover skills synchronously at startup for initial instructions
   // This ensures the initialize response includes skills before roots are available
-  const initialSkills = discoverSkillsFromFallback(fallbackSkillsDir);
+  const initialSkills = discoverSkillsFromDir(skillsDir);
   skillState.skillMap = createSkillMap(initialSkills);
   skillState.instructions = generateInstructions(initialSkills);
   console.error(`Initial skills discovered: ${initialSkills.length}`);
@@ -115,7 +115,7 @@ async function main() {
         tools: {},
         resources: { subscribe: true, listChanged: true },
       },
-      // Include skills discovered from fallback directory
+      // Include skills discovered from configured directory
       instructions: skillState.instructions,
     }
   );
@@ -134,7 +134,7 @@ async function main() {
     // Delay to ensure notifications/initialized handler finishes
     // (per MCP reference implementation)
     setTimeout(() => {
-      syncSkills(server, fallbackSkillsDir, (newSkillMap, newInstructions) => {
+      syncSkills(server, skillsDir, (newSkillMap, newInstructions) => {
         // Update shared state
         skillState.skillMap = newSkillMap;
         skillState.instructions = newInstructions;

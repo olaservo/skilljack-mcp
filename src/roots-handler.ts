@@ -105,20 +105,20 @@ export type SkillsChangedCallback = (
 ) => void;
 
 /**
- * Sync skills from roots or fallback directory.
+ * Sync skills from roots or configured skills directory.
  *
  * Pattern from mcp-server-ts snippets/server/index.ts:
  * - Check client capabilities
  * - Request roots if supported
- * - Fall back to directory if not
+ * - Use skills directory if not
  *
  * @param server - The McpServer instance
- * @param fallbackDir - Optional fallback directory if client doesn't support roots
+ * @param skillsDir - Optional skills directory if client doesn't support roots
  * @param onSkillsChanged - Callback when skills are updated
  */
 export async function syncSkills(
   server: McpServer,
-  fallbackDir: string | null,
+  skillsDir: string | null,
   onSkillsChanged: SkillsChangedCallback
 ): Promise<void> {
   const capabilities = server.server.getClientCapabilities();
@@ -134,10 +134,10 @@ export async function syncSkills(
       const { skills } = discoverSkillsFromRoots(roots);
       console.error(`Discovered ${skills.length} skill(s) from roots`);
 
-      // If no skills found from roots, try fallback directory
-      if (skills.length === 0 && fallbackDir) {
-        console.error("No skills found from roots, trying fallback directory...");
-        useFallbackDirectory(fallbackDir, onSkillsChanged);
+      // If no skills found from roots, try configured skills directory
+      if (skills.length === 0 && skillsDir) {
+        console.error("No skills found from roots, trying skills directory...");
+        useSkillsDirectory(skillsDir, onSkillsChanged);
       } else {
         const skillMap = createSkillMap(skills);
         const instructions = generateInstructions(skills);
@@ -146,17 +146,17 @@ export async function syncSkills(
 
       // Listen for roots changes if client supports listChanged
       if (capabilities.roots.listChanged) {
-        setupRootsChangeHandler(server, fallbackDir, onSkillsChanged);
+        setupRootsChangeHandler(server, skillsDir, onSkillsChanged);
       }
     } catch (error) {
       console.error("Failed to get roots from client:", error);
-      // Fall through to fallback
-      useFallbackDirectory(fallbackDir, onSkillsChanged);
+      // Use skills directory instead
+      useSkillsDirectory(skillsDir, onSkillsChanged);
     }
   } else {
-    // Client doesn't support roots - use fallback
-    console.error("Client does not support roots, using fallback directory");
-    useFallbackDirectory(fallbackDir, onSkillsChanged);
+    // Client doesn't support roots - use skills directory
+    console.error("Client does not support roots, using skills directory");
+    useSkillsDirectory(skillsDir, onSkillsChanged);
   }
 }
 
@@ -165,7 +165,7 @@ export async function syncSkills(
  */
 function setupRootsChangeHandler(
   server: McpServer,
-  fallbackDir: string | null,
+  skillsDir: string | null,
   onSkillsChanged: SkillsChangedCallback
 ): void {
   server.server.setNotificationHandler(
@@ -196,47 +196,47 @@ function setupRootsChangeHandler(
 }
 
 /**
- * Use the fallback directory when roots are unavailable.
+ * Use the configured skills directory when roots are unavailable.
  * Checks both the directory itself and SKILL_SUBDIRS subdirectories
  * to match roots discovery behavior.
  */
-function useFallbackDirectory(
-  fallbackDir: string | null,
+function useSkillsDirectory(
+  skillsDir: string | null,
   onSkillsChanged: SkillsChangedCallback
 ): void {
-  if (!fallbackDir) {
-    console.error("No fallback directory configured, no skills available");
+  if (!skillsDir) {
+    console.error("No skills directory configured, no skills available");
     onSkillsChanged(new Map(), generateInstructions([]));
     return;
   }
 
-  console.error(`Using fallback skills directory: ${fallbackDir}`);
+  console.error(`Using skills directory: ${skillsDir}`);
 
   try {
     const allSkills: SkillMetadata[] = [];
 
-    // First, check if the fallback directory itself contains skills
-    // (for backwards compatibility when user passes the exact skills folder)
-    const directSkills = discoverSkills(fallbackDir);
+    // First, check if the directory itself contains skills
+    // (for when user passes the exact skills folder)
+    const directSkills = discoverSkills(skillsDir);
     allSkills.push(...directSkills);
 
     // Also check SKILL_SUBDIRS subdirectories (matching roots discovery behavior)
     for (const subdir of SKILL_SUBDIRS) {
-      const skillsDir = path.join(fallbackDir, subdir);
-      if (fs.existsSync(skillsDir)) {
-        const subdirSkills = discoverSkills(skillsDir);
+      const subPath = path.join(skillsDir, subdir);
+      if (fs.existsSync(subPath)) {
+        const subdirSkills = discoverSkills(subPath);
         allSkills.push(...subdirSkills);
       }
     }
 
-    console.error(`Found ${allSkills.length} skill(s) in fallback directory`);
+    console.error(`Found ${allSkills.length} skill(s) in skills directory`);
 
     const skillMap = createSkillMap(allSkills);
     const instructions = generateInstructions(allSkills);
 
     onSkillsChanged(skillMap, instructions);
   } catch (error) {
-    console.error(`Failed to discover skills in fallback directory:`, error);
+    console.error(`Failed to discover skills in skills directory:`, error);
     onSkillsChanged(new Map(), generateInstructions([]));
   }
 }
