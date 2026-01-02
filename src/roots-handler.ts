@@ -105,6 +105,29 @@ export type SkillsChangedCallback = (
 ) => void;
 
 /**
+ * Discover skills from a directory, checking both the directory itself
+ * and SKILL_SUBDIRS subdirectories.
+ */
+function discoverSkillsFromDirectory(skillsDir: string): SkillMetadata[] {
+  const allSkills: SkillMetadata[] = [];
+
+  // Check if the directory itself contains skills
+  const directSkills = discoverSkills(skillsDir);
+  allSkills.push(...directSkills);
+
+  // Also check SKILL_SUBDIRS subdirectories
+  for (const subdir of SKILL_SUBDIRS) {
+    const subPath = path.join(skillsDir, subdir);
+    if (fs.existsSync(subPath)) {
+      const subdirSkills = discoverSkills(subPath);
+      allSkills.push(...subdirSkills);
+    }
+  }
+
+  return allSkills;
+}
+
+/**
  * Sync skills from roots or configured skills directory.
  *
  * Pattern from mcp-server-ts snippets/server/index.ts:
@@ -122,26 +145,38 @@ export async function syncSkills(
   onSkillsChanged: SkillsChangedCallback
 ): Promise<void> {
   const capabilities = server.server.getClientCapabilities();
+  const allSkills: SkillMetadata[] = [];
+  const seenNames = new Set<string>();
 
+  // Always discover from configured skills directory first
+  if (skillsDir) {
+    const dirSkills = discoverSkillsFromDirectory(skillsDir);
+    console.error(`Discovered ${dirSkills.length} skill(s) from skills directory`);
+    for (const skill of dirSkills) {
+      if (!seenNames.has(skill.name)) {
+        seenNames.add(skill.name);
+        allSkills.push(skill);
+      }
+    }
+  }
+
+  // Also discover from roots if client supports them
   if (capabilities?.roots) {
-    // Client supports roots - request them
     console.error("Client supports roots, requesting workspace roots...");
 
     try {
       const { roots } = await server.server.listRoots();
       console.error(`Received ${roots.length} root(s) from client`);
 
-      const { skills } = discoverSkillsFromRoots(roots);
-      console.error(`Discovered ${skills.length} skill(s) from roots`);
+      const { skills: rootSkills } = discoverSkillsFromRoots(roots);
+      console.error(`Discovered ${rootSkills.length} skill(s) from roots`);
 
-      // If no skills found from roots, try configured skills directory
-      if (skills.length === 0 && skillsDir) {
-        console.error("No skills found from roots, trying skills directory...");
-        useSkillsDirectory(skillsDir, onSkillsChanged);
-      } else {
-        const skillMap = createSkillMap(skills);
-        const instructions = generateInstructions(skills);
-        onSkillsChanged(skillMap, instructions);
+      // Add roots skills, skipping duplicates (skillsDir takes precedence)
+      for (const skill of rootSkills) {
+        if (!seenNames.has(skill.name)) {
+          seenNames.add(skill.name);
+          allSkills.push(skill);
+        }
       }
 
       // Listen for roots changes if client supports listChanged
@@ -150,14 +185,15 @@ export async function syncSkills(
       }
     } catch (error) {
       console.error("Failed to get roots from client:", error);
-      // Use skills directory instead
-      useSkillsDirectory(skillsDir, onSkillsChanged);
     }
   } else {
-    // Client doesn't support roots - use skills directory
-    console.error("Client does not support roots, using skills directory");
-    useSkillsDirectory(skillsDir, onSkillsChanged);
+    console.error("Client does not support roots");
   }
+
+  console.error(`Total skills available: ${allSkills.length}`);
+  const skillMap = createSkillMap(allSkills);
+  const instructions = generateInstructions(allSkills);
+  onSkillsChanged(skillMap, instructions);
 }
 
 /**
@@ -174,13 +210,36 @@ function setupRootsChangeHandler(
       console.error("Roots changed notification received, re-discovering skills...");
 
       try {
+        const allSkills: SkillMetadata[] = [];
+        const seenNames = new Set<string>();
+
+        // Always include skills from configured directory first
+        if (skillsDir) {
+          const dirSkills = discoverSkillsFromDirectory(skillsDir);
+          for (const skill of dirSkills) {
+            if (!seenNames.has(skill.name)) {
+              seenNames.add(skill.name);
+              allSkills.push(skill);
+            }
+          }
+        }
+
+        // Add skills from roots
         const { roots } = await server.server.listRoots();
-        const { skills } = discoverSkillsFromRoots(roots);
+        const { skills: rootSkills } = discoverSkillsFromRoots(roots);
 
-        console.error(`Re-discovered ${skills.length} skill(s) from updated roots`);
+        console.error(`Re-discovered ${rootSkills.length} skill(s) from updated roots`);
 
-        const skillMap = createSkillMap(skills);
-        const instructions = generateInstructions(skills);
+        for (const skill of rootSkills) {
+          if (!seenNames.has(skill.name)) {
+            seenNames.add(skill.name);
+            allSkills.push(skill);
+          }
+        }
+
+        console.error(`Total skills available: ${allSkills.length}`);
+        const skillMap = createSkillMap(allSkills);
+        const instructions = generateInstructions(allSkills);
 
         onSkillsChanged(skillMap, instructions);
 
@@ -193,50 +252,4 @@ function setupRootsChangeHandler(
       }
     }
   );
-}
-
-/**
- * Use the configured skills directory when roots are unavailable.
- * Checks both the directory itself and SKILL_SUBDIRS subdirectories
- * to match roots discovery behavior.
- */
-function useSkillsDirectory(
-  skillsDir: string | null,
-  onSkillsChanged: SkillsChangedCallback
-): void {
-  if (!skillsDir) {
-    console.error("No skills directory configured, no skills available");
-    onSkillsChanged(new Map(), generateInstructions([]));
-    return;
-  }
-
-  console.error(`Using skills directory: ${skillsDir}`);
-
-  try {
-    const allSkills: SkillMetadata[] = [];
-
-    // First, check if the directory itself contains skills
-    // (for when user passes the exact skills folder)
-    const directSkills = discoverSkills(skillsDir);
-    allSkills.push(...directSkills);
-
-    // Also check SKILL_SUBDIRS subdirectories (matching roots discovery behavior)
-    for (const subdir of SKILL_SUBDIRS) {
-      const subPath = path.join(skillsDir, subdir);
-      if (fs.existsSync(subPath)) {
-        const subdirSkills = discoverSkills(subPath);
-        allSkills.push(...subdirSkills);
-      }
-    }
-
-    console.error(`Found ${allSkills.length} skill(s) in skills directory`);
-
-    const skillMap = createSkillMap(allSkills);
-    const instructions = generateInstructions(allSkills);
-
-    onSkillsChanged(skillMap, instructions);
-  } catch (error) {
-    console.error(`Failed to discover skills in skills directory:`, error);
-    onSkillsChanged(new Map(), generateInstructions([]));
-  }
 }
