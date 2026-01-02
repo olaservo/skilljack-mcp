@@ -4,12 +4,11 @@ An MCP server that jacks [Agent Skills](https://agentskills.dev) directly into y
 
 ## Features
 
-- **Dynamic Skill Discovery** - Discovers skills from configured directory at startup, with additional discovery from MCP Roots after initialization
-- **Server Instructions** - Injects skill metadata into the client's system prompt (for clients supporting instructions)
+- **Skill Discovery** - Discovers skills from a configured directory at startup
+- **Server Instructions** - Injects skill metadata into the system prompt (for clients supporting instructions)
 - **Skill Tool** - Load full skill content on demand (progressive disclosure)
-- **MCP Resources** - Access skills via `skill://` URIs with batch collection support (for clients supporting resources)
+- **MCP Resources** - Access skills via `skill://` URIs with batch collection support
 - **Resource Subscriptions** - Real-time file watching with `notifications/resources/updated`
-- **Live Updates** - Re-discovers skills when workspace roots change (updates tools, but not system prompt)
 
 ## Installation
 
@@ -20,7 +19,7 @@ npm install @olaservo/skill-jack-mcp
 Or run directly with npx:
 
 ```bash
-npx @olaservo/skill-jack-mcp
+npx @olaservo/skill-jack-mcp /path/to/skills
 ```
 
 ### From Source
@@ -34,18 +33,7 @@ npm run build
 
 ## Usage
 
-The server discovers skills from two sources:
-
-| Source | What it is | When discovered | In system prompt? |
-|--------|-----------|-----------------|-------------------|
-| **Skills directory** | A fixed path you configure (global skills) | At startup | ✓ Yes |
-| **MCP Roots** | Workspace folders from your MCP client (project-specific skills) | After initialization | ✗ No (tools only) |
-
-Skills from both sources are merged, with the configured directory taking precedence on name conflicts.
-
-### Skills Directory (Global Skills)
-
-Configure a skills directory for skills you want available everywhere:
+Configure a skills directory containing your Agent Skills:
 
 ```bash
 # Pass skills directory as argument
@@ -55,71 +43,37 @@ skill-jack-mcp /path/to/skills
 SKILLS_DIR=/path/to/skills skill-jack-mcp
 ```
 
-The server scans the directory and its `.claude/skills/` and `skills/` subdirectories.
+The server scans the directory and its `.claude/skills/` and `skills/` subdirectories for skills.
 
 **Windows note**: Use forward slashes in paths when using with MCP Inspector:
 ```bash
 skill-jack-mcp "C:/Users/you/skills"
 ```
 
-### MCP Roots (Project-Specific Skills)
-
-If your [MCP client supports Roots](https://modelcontextprotocol.io/clients), the server also discovers skills from your current workspace. For example, when Claude Code opens a project folder, that folder becomes a "root".
-
-The server scans each root for:
-- `{root}/.claude/skills/`
-- `{root}/skills/`
-
-This lets you add project-specific skills that are only available when working in that project.
-
-```bash
-# Combine global skills directory with project-specific roots
-skill-jack-mcp /path/to/global/skills
-```
-
-**Note**: Skills from roots are only available via tools, not in the system prompt (see [timing notes](#important-roots-vs-instructions-timing)).
-
 ## How It Works
 
-The server implements the Agent Skills progressive disclosure pattern with MCP Roots support:
+The server implements the [Agent Skills](https://agentskills.dev) progressive disclosure pattern:
 
-1. **At startup**: Discovers skills from configured skills directory
+1. **At startup**: Discovers skills from configured directory
 2. **On connection**: Server instructions (with skill metadata) are sent in the initialize response
-3. **After initialization**: Server requests workspace roots from client and updates available skills
-4. **On tool call**: Agent calls `skill` tool to load full SKILL.md content
-5. **Live updates**: Re-discovers when client's workspace roots change
+3. **On tool call**: Agent calls `skill` tool to load full SKILL.md content
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │ Server starts                                            │
 │   • Discovers skills from configured directory           │
-│   • Generates initial instructions with skill metadata   │
+│   • Generates instructions with skill metadata           │
 │   ↓                                                      │
-│ MCP Client connects (initialize request/response)        │
-│   • Server instructions included in response             │
-│   ↓                                                      │
-│ Client sends initialized notification                    │
-│   ↓                                                      │
-│ Server requests roots from client                        │
-│   • Scans .claude/skills/ and skills/ in each root      │
-│   • Updates skill tools (but cannot update instructions) │
+│ MCP Client connects                                      │
+│   • Server instructions included in initialize response  │
 │   ↓                                                      │
 │ LLM sees skill metadata in system prompt                 │
+│   ↓                                                      │
 │ LLM calls "skill" tool with skill name                   │
 │   ↓                                                      │
-│ (Workspace changes → roots/list_changed → re-discover)   │
+│ Server returns full SKILL.md content                     │
 └─────────────────────────────────────────────────────────┘
 ```
-
-### Important: Roots vs Instructions Timing
-
-Per the [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle), server `instructions` are sent in the initialize response, **before** the client sends the `initialized` notification. Roots can only be requested **after** initialization completes.
-
-This means:
-- **Skills from configured directory**: Appear in server instructions (system prompt) ✓
-- **Skills from MCP Roots**: Only available via tools and resources after initialization
-
-**Recommendation**: Always provide a skills directory argument if you want skills to appear in the LLM's system prompt. Roots are useful for dynamic workspace-specific skills that can be accessed via tools.
 
 ## Tools
 
@@ -204,11 +158,6 @@ Clients can subscribe to resources for real-time updates when files change.
 3. When files change, server debounces (100ms) and sends notification
 4. Client can re-read the resource to get updated content
 
-**URI to file path resolution:**
-- `skill://` → watches all skill directories
-- `skill://{name}` → watches that skill's SKILL.md
-- `skill://{name}/{path}` → watches specific file
-
 ## Security
 
 **Skills are treated as trusted content.** This server reads and serves skill files directly to clients without sanitization. Only configure skills directories containing content you trust.
@@ -245,28 +194,12 @@ These are loaded into the model's system prompt by [clients](https://modelcontex
 
 ## Skill Discovery
 
-### From Configured Directory (at startup)
-
-Skills are discovered synchronously at startup from the configured directory. The server checks:
+Skills are discovered at startup from the configured directory. The server checks:
 - The directory itself for skill subdirectories
 - `.claude/skills/` subdirectory
 - `skills/` subdirectory
 
-These skills are included in server instructions (system prompt).
-
-### From MCP Roots (after initialization)
-
-When the client supports MCP [Roots](https://modelcontextprotocol.io/specification/2025-11-25/client/roots), the server also scans each workspace root for:
-- `{root}/.claude/skills/`
-- `{root}/skills/`
-
-These skills are available via tools and resources, but not in the system prompt (see [Roots vs Instructions Timing](#important-roots-vs-instructions-timing)).
-
-### Skill Merging and Naming
-
-Skills from both sources are merged:
-- **Configured directory wins**: If a skill name exists in both, the configured directory version is used
-- **Roots conflicts**: If the same skill name exists in multiple roots, it's prefixed with the root name (e.g., `project-a:commit`)
+Each skill subdirectory must contain a `SKILL.md` file with YAML frontmatter including `name` and `description` fields.
 
 ## Testing
 

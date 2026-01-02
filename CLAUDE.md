@@ -14,13 +14,12 @@ src/
 ├── skill-discovery.ts # YAML frontmatter parsing, XML generation
 ├── skill-tool.ts      # MCP tools: skill, skill-resource
 ├── skill-resources.ts # MCP Resources: skill:// URI scheme
-├── roots-handler.ts   # MCP Roots support, workspace discovery
 └── subscriptions.ts   # File watching, resource subscriptions
 ```
 
 ## Key Abstractions
 
-**SkillState** - Shared state for dynamic updates:
+**SkillState** - Shared state:
 - `skillMap: Map<string, SkillMetadata>` - name → skill lookup
 - `instructions: string` - Generated XML for system prompt
 
@@ -29,12 +28,10 @@ src/
 
 ## Architecture
 
-1. **Shared state pattern**: Tools/resources reference `SkillState` object, updated when roots change
-2. **Startup discovery**: Skills discovered synchronously from configured directory before server starts (for system prompt)
-3. **Post-init discovery**: `server.server.oninitialized` triggers `syncSkills()` for roots-based updates (tools only)
+1. **Startup discovery**: Skills discovered from configured directory at startup
+2. **Server instructions**: Skill metadata included in initialize response (system prompt)
+3. **Progressive disclosure**: Full SKILL.md loaded on demand via `skill` tool
 4. **MCP SDK patterns**: Uses `McpServer`, `ResourceTemplate`, Zod schemas for tool inputs
-
-**Important timing note**: Server `instructions` are sent in the initialize response, before roots are available. Skills from roots cannot appear in the system prompt - only skills discovered at startup from the configured directory are included.
 
 ## Modification Guide
 
@@ -43,7 +40,6 @@ src/
 | New tool | `skill-tool.ts` - use `server.registerTool()` |
 | New resource | `skill-resources.ts` - use `server.registerResource()` |
 | Skill discovery logic | `skill-discovery.ts` |
-| Roots handling | `roots-handler.ts` |
 
 ## Conventions
 

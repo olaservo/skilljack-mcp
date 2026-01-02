@@ -3,11 +3,10 @@
  * Skill Jack MCP - "I know kung fu."
  *
  * MCP server that jacks Agent Skills directly into your LLM's brain.
- * Now with MCP Roots support for dynamic workspace skill discovery.
+ * Provides global skills with tools for progressive disclosure.
  *
  * Usage:
- *   skill-jack-mcp                    # Uses roots from client
- *   skill-jack-mcp /path/to/skills    # Skills directory
+ *   skill-jack-mcp /path/to/skills    # Skills directory (required)
  *   SKILLS_DIR=/path/to/skills skill-jack-mcp
  */
 
@@ -18,16 +17,18 @@ import * as path from "node:path";
 import { discoverSkills, generateInstructions, createSkillMap } from "./skill-discovery.js";
 import { registerSkillTool, SkillState } from "./skill-tool.js";
 import { registerSkillResources } from "./skill-resources.js";
-import { syncSkills, SKILL_SUBDIRS } from "./roots-handler.js";
 import {
   createSubscriptionManager,
   registerSubscriptionHandlers,
-  refreshSubscriptions,
 } from "./subscriptions.js";
 
 /**
+ * Subdirectories to check for skills within the configured directory.
+ */
+const SKILL_SUBDIRS = [".claude/skills", "skills"];
+
+/**
  * Get the skills directory from command line args or environment.
- * This directory is scanned at startup to populate server instructions.
  */
 function getSkillsDir(): string | null {
   // Check command line argument first
@@ -46,8 +47,8 @@ function getSkillsDir(): string | null {
 }
 
 /**
- * Shared state for dynamic skill management.
- * Tools and resources reference this state, allowing updates when roots change.
+ * Shared state for skill management.
+ * Tools and resources reference this state.
  */
 const skillState: SkillState = {
   skillMap: new Map(),
@@ -55,22 +56,17 @@ const skillState: SkillState = {
 };
 
 /**
- * Discover skills synchronously from configured directory.
- * Checks both the directory itself and SKILL_SUBDIRS subdirectories.
- * Used at startup to populate initial instructions before roots are available.
+ * Discover skills from configured directory.
+ * Checks both the directory itself and standard subdirectories.
  */
-function discoverSkillsFromDir(skillsDir: string | null): ReturnType<typeof discoverSkills> {
-  if (!skillsDir) {
-    return [];
-  }
-
+function discoverSkillsFromDir(skillsDir: string): ReturnType<typeof discoverSkills> {
   const allSkills: ReturnType<typeof discoverSkills> = [];
 
   // Check if the directory itself contains skills
   const directSkills = discoverSkills(skillsDir);
   allSkills.push(...directSkills);
 
-  // Also check SKILL_SUBDIRS subdirectories
+  // Also check standard subdirectories
   for (const subdir of SKILL_SUBDIRS) {
     const subPath = path.join(skillsDir, subdir);
     if (fs.existsSync(subPath)) {
@@ -90,21 +86,22 @@ const subscriptionManager = createSubscriptionManager();
 async function main() {
   const skillsDir = getSkillsDir();
 
-  // Log startup mode
-  if (skillsDir) {
-    console.error(`Skills directory: ${skillsDir}`);
-  } else {
-    console.error("No skills directory configured (will use roots only)");
+  if (!skillsDir) {
+    console.error("No skills directory configured.");
+    console.error("Usage: skill-jack-mcp /path/to/skills");
+    console.error("   or: SKILLS_DIR=/path/to/skills skill-jack-mcp");
+    process.exit(1);
   }
 
-  // Discover skills synchronously at startup for initial instructions
-  // This ensures the initialize response includes skills before roots are available
-  const initialSkills = discoverSkillsFromDir(skillsDir);
-  skillState.skillMap = createSkillMap(initialSkills);
-  skillState.instructions = generateInstructions(initialSkills);
-  console.error(`Initial skills discovered: ${initialSkills.length}`);
+  console.error(`Skills directory: ${skillsDir}`);
 
-  // Create the MCP server with pre-discovered skills in instructions
+  // Discover skills at startup
+  const skills = discoverSkillsFromDir(skillsDir);
+  skillState.skillMap = createSkillMap(skills);
+  skillState.instructions = generateInstructions(skills);
+  console.error(`Discovered ${skills.length} skill(s)`);
+
+  // Create the MCP server
   const server = new McpServer(
     {
       name: "skill-jack-mcp",
@@ -115,46 +112,16 @@ async function main() {
         tools: {},
         resources: { subscribe: true, listChanged: true },
       },
-      // Include skills discovered from configured directory
       instructions: skillState.instructions,
     }
   );
 
-  // Register tools and resources that reference the shared skillState
-  // These will use the current skillMap, which gets updated dynamically
+  // Register tools and resources
   registerSkillTool(server, skillState);
   registerSkillResources(server, skillState);
 
   // Register subscription handlers for resource file watching
   registerSubscriptionHandlers(server, skillState, subscriptionManager);
-
-  // Set up post-initialization handler for roots discovery
-  // Pattern from .claude/skills/mcp-server-ts/snippets/server/index.ts
-  server.server.oninitialized = async () => {
-    // Delay to ensure notifications/initialized handler finishes
-    // (per MCP reference implementation)
-    setTimeout(() => {
-      syncSkills(server, skillsDir, (newSkillMap, newInstructions) => {
-        // Update shared state
-        skillState.skillMap = newSkillMap;
-        skillState.instructions = newInstructions;
-
-        // Refresh subscriptions with new skill paths
-        const sendNotification = (uri: string) => {
-          server.server.notification({
-            method: "notifications/resources/updated",
-            params: { uri },
-          });
-        };
-        refreshSubscriptions(subscriptionManager, skillState, sendNotification);
-
-        const skillNames = Array.from(newSkillMap.keys());
-        console.error(
-          `Skills updated: ${skillNames.join(", ") || "none"}`
-        );
-      });
-    }, 350);
-  };
 
   // Connect via stdio transport
   const transport = new StdioServerTransport();
