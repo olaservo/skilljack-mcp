@@ -96,7 +96,7 @@ Read files within a skill's directory (`scripts/`, `references/`, `assets/`, `sn
 
 This follows the Agent Skills spec's progressive disclosure pattern - resources are loaded only when needed.
 
-**Input:**
+**Read a single file:**
 ```json
 {
   "skill": "mcp-server-ts",
@@ -104,7 +104,14 @@ This follows the Agent Skills spec's progressive disclosure pattern - resources 
 }
 ```
 
-**Output:** File content.
+**Read all files in a directory:**
+```json
+{
+  "skill": "algorithmic-art",
+  "path": "templates"
+}
+```
+Returns all files in the directory as multiple content items.
 
 **List available files** (pass empty path):
 ```json
