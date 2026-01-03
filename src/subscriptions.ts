@@ -8,6 +8,7 @@
  * URI patterns supported:
  * - skill://              → Watch all skill directories
  * - skill://{name}        → Watch that skill's SKILL.md
+ * - skill://{name}/       → Watch entire skill directory (directory collection)
  * - skill://{name}/{path} → Watch specific file
  */
 
@@ -78,6 +79,14 @@ export function resolveUriToFilePaths(
     const skillName = decodeURIComponent(skillMatch[1]);
     const skill = skillState.skillMap.get(skillName);
     return skill ? [skill.path] : [];
+  }
+
+  // skill://{skillName}/ → Watch entire skill directory (directory collection)
+  const dirMatch = uri.match(/^skill:\/\/([^/]+)\/$/);
+  if (dirMatch) {
+    const skillName = decodeURIComponent(dirMatch[1]);
+    const skill = skillState.skillMap.get(skillName);
+    return skill ? [path.dirname(skill.path)] : [];
   }
 
   // skill://{skillName}/{path} → Specific file
