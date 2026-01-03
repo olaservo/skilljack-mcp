@@ -132,7 +132,9 @@ const SkillResourceSchema = z.object({
 });
 
 // Security constants (exported for reuse in skill-resources.ts)
-export const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB max file size
+const DEFAULT_MAX_FILE_SIZE_MB = 1;
+const maxFileSizeMB = parseInt(process.env.MAX_FILE_SIZE_MB || "", 10) || DEFAULT_MAX_FILE_SIZE_MB;
+export const MAX_FILE_SIZE = maxFileSizeMB * 1024 * 1024; // Configurable via MAX_FILE_SIZE_MB env var
 export const MAX_DIRECTORY_DEPTH = 10; // Prevent deeply nested traversal
 
 /**

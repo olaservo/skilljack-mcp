@@ -188,7 +188,7 @@ Clients can subscribe to resources for real-time updates when files change.
 
 Protections in place:
 - Path traversal prevention (symlink-aware)
-- File size limits (10MB max)
+- File size limits (1MB default, configurable via `MAX_FILE_SIZE_MB` env var)
 - Directory depth limits
 - Skill content is confined to configured directories
 

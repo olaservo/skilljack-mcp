@@ -79,7 +79,7 @@ capabilities: {
 - ES modules (`.js` extensions in imports)
 - Errors logged to stderr (stdout is MCP protocol)
 - Security: path traversal checks via `isPathWithinBase()`
-- File size limit: 10MB (`MAX_FILE_SIZE`)
+- File size limit: 1MB default (`MAX_FILE_SIZE_MB` env var to configure)
 - Debouncing: 500ms for skill refresh, 100ms for resource notifications
 
 ## Testing
