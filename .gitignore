@@ -22,4 +22,6 @@ npm-debug.log*
 .env
 .env.local
 .claude/settings.local.json
+
+# Testing
 TEST_PLAN.md
