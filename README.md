@@ -64,6 +64,7 @@ The server implements the [Agent Skills](https://agentskills.io) progressive dis
 1. **At startup**: Discovers skills from configured directories
 2. **On connection**: Server instructions (with skill metadata) are sent in the initialize response
 3. **On tool call**: Agent calls `skill` tool to load full SKILL.md content
+4. **As needed**: Agent calls `skill-resource` to load additional files (scripts, snippets, references, etc.)
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -79,6 +80,10 @@ The server implements the [Agent Skills](https://agentskills.io) progressive dis
 │ LLM calls "skill" tool with skill name                   │
 │   ↓                                                      │
 │ Server returns full SKILL.md content                     │
+│   ↓                                                      │
+│ LLM calls "skill-resource" for additional files          │
+│   • Scripts, snippets, references, assets, etc.          │
+│   • Loaded on-demand as the skill instructions direct    │
 └─────────────────────────────────────────────────────────┘
 ```
 
