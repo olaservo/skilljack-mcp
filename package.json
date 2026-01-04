@@ -1,11 +1,11 @@
 {
-  "name": "@olaservo/skill-jack-mcp",
+  "name": "@skilljack/mcp",
   "version": "0.3.0",
   "description": "MCP server that discovers and serves Agent Skills. I know kung fu.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "skill-jack-mcp": "dist/index.js"
+    "skilljack-mcp": "dist/index.js"
   },
   "publishConfig": {
     "access": "public"
@@ -20,9 +20,9 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/olaservo/skill-jack-mcp.git"
+    "url": "git+https://github.com/olaservo/skilljack-mcp.git"
   },
-  "homepage": "https://github.com/olaservo/skill-jack-mcp#readme",
+  "homepage": "https://github.com/olaservo/skilljack-mcp#readme",
   "keywords": [
     "mcp",
     "model-context-protocol",

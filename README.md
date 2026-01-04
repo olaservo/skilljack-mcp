@@ -1,4 +1,4 @@
-# Skill Jack MCP
+# Skilljack MCP
 
 An MCP server that jacks [Agent Skills](https://agentskills.io) directly into your LLM's brain.
 
@@ -15,20 +15,20 @@ An MCP server that jacks [Agent Skills](https://agentskills.io) directly into yo
 ## Installation
 
 ```bash
-npm install @olaservo/skill-jack-mcp
+npm install @skilljack/mcp
 ```
 
 Or run directly with npx:
 
 ```bash
-npx @olaservo/skill-jack-mcp /path/to/skills
+npx @skilljack/mcp /path/to/skills
 ```
 
 ### From Source
 
 ```bash
-git clone https://github.com/olaservo/skill-jack-mcp.git
-cd skill-jack-mcp
+git clone https://github.com/olaservo/skilljack-mcp.git
+cd skilljack-mcp
 npm install
 npm run build
 ```
@@ -39,22 +39,22 @@ Configure one or more skills directories containing your Agent Skills:
 
 ```bash
 # Single directory
-skill-jack-mcp /path/to/skills
+skilljack-mcp /path/to/skills
 
 # Multiple directories (separate args or comma-separated)
-skill-jack-mcp /path/to/skills /path/to/more/skills
-skill-jack-mcp /path/to/skills,/path/to/more/skills
+skilljack-mcp /path/to/skills /path/to/more/skills
+skilljack-mcp /path/to/skills,/path/to/more/skills
 
 # Using environment variable (comma-separated for multiple)
-SKILLS_DIR=/path/to/skills skill-jack-mcp
-SKILLS_DIR=/path/to/skills,/path/to/more/skills skill-jack-mcp
+SKILLS_DIR=/path/to/skills skilljack-mcp
+SKILLS_DIR=/path/to/skills,/path/to/more/skills skilljack-mcp
 ```
 
 Each directory is scanned along with its `.claude/skills/` and `skills/` subdirectories for skills. Duplicate skill names are handled by keeping the first occurrence.
 
 **Windows note**: Use forward slashes in paths when using with MCP Inspector:
 ```bash
-skill-jack-mcp "C:/Users/you/skills"
+skilljack-mcp "C:/Users/you/skills"
 ```
 
 ## How It Works

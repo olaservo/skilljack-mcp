@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
- * Skill Jack MCP - "I know kung fu."
+ * Skilljack MCP - "I know kung fu."
  *
  * MCP server that jacks Agent Skills directly into your LLM's brain.
  * Provides global skills with tools for progressive disclosure.
  *
  * Usage:
- *   skill-jack-mcp /path/to/skills [/path2 ...]   # One or more directories
- *   SKILLS_DIR=/path/to/skills skill-jack-mcp    # Single directory via env
- *   SKILLS_DIR=/path1,/path2 skill-jack-mcp      # Multiple (comma-separated)
+ *   skilljack-mcp /path/to/skills [/path2 ...]   # One or more directories
+ *   SKILLS_DIR=/path/to/skills skilljack-mcp    # Single directory via env
+ *   SKILLS_DIR=/path1,/path2 skilljack-mcp      # Multiple (comma-separated)
  */
 
 import { McpServer, RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -288,9 +288,9 @@ async function main() {
 
   if (skillsDirs.length === 0) {
     console.error("No skills directory configured.");
-    console.error("Usage: skill-jack-mcp /path/to/skills [/path/to/more/skills ...]");
-    console.error("   or: SKILLS_DIR=/path/to/skills skill-jack-mcp");
-    console.error("   or: SKILLS_DIR=/path1,/path2 skill-jack-mcp");
+    console.error("Usage: skilljack-mcp /path/to/skills [/path/to/more/skills ...]");
+    console.error("   or: SKILLS_DIR=/path/to/skills skilljack-mcp");
+    console.error("   or: SKILLS_DIR=/path1,/path2 skilljack-mcp");
     process.exit(1);
   }
 
@@ -304,7 +304,7 @@ async function main() {
   // Create the MCP server
   const server = new McpServer(
     {
-      name: "skill-jack-mcp",
+      name: "skilljack-mcp",
       version: "1.0.0",
     },
     {
@@ -328,7 +328,7 @@ async function main() {
   // Connect via stdio transport
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Skill Jack ready. I know kung fu.");
+  console.error("Skilljack ready. I know kung fu.");
 }
 
 main().catch((error) => {

@@ -1,4 +1,4 @@
-# Skill Jack MCP - Developer Guide
+# Skilljack MCP - Developer Guide
 
 ## Commands
 
