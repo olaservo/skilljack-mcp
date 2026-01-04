@@ -93,6 +93,15 @@ The server implements the [Agent Skills](https://agentskills.io) progressive dis
 └─────────────────────────────────────────────────────────┘
 ```
 
+## Tools vs Resources
+
+This server exposes skills via both **tools** and **resources**:
+
+- **Tools** (`skill`, `skill-resource`) - For your agent to use autonomously. The LLM sees available skills in the tool description and calls them as needed.
+- **Resources** (`skill://` URIs) - For manual selection in apps that support it (e.g., Claude Desktop's resource picker). Useful when you want to explicitly attach a skill to the conversation.
+
+Most users will rely on tools for automatic skill activation. Resources provide an alternative for manual control.
+
 ## Tools
 
 ### `skill`
