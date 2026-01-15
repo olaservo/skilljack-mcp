@@ -1,0 +1,7 @@
+{
+  "_comment": "SKILLJACK_TEMPLATE_LOADED",
+  "name": "{{PROJECT_NAME}}",
+  "version": "1.0.0",
+  "description": "{{DESCRIPTION}}",
+  "author": "{{AUTHOR}}"
+}

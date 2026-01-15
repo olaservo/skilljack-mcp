@@ -38,7 +38,11 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
-    "inspector": "npx @modelcontextprotocol/inspector@latest node dist/index.js"
+    "inspector": "npx @modelcontextprotocol/inspector@latest node dist/index.js",
+    "eval": "tsx evals/eval.ts",
+    "eval:greeting": "tsx evals/eval.ts --task=greeting",
+    "eval:code-style": "tsx evals/eval.ts --task=code-style",
+    "eval:template": "tsx evals/eval.ts --task=template-generator"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.1",
@@ -47,6 +51,7 @@
     "zod": "^3.25.0"
   },
   "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.42",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"

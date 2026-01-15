@@ -25,3 +25,9 @@ npm-debug.log*
 
 # Testing
 TEST_PLAN.md
+
+# Evals
+evals/logs/
+evals/results/
+!evals/logs/.gitkeep
+!evals/results/.gitkeep
