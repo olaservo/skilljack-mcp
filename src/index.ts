@@ -19,6 +19,7 @@ import * as path from "node:path";
 import { discoverSkills, createSkillMap } from "./skill-discovery.js";
 import { registerSkillTool, getToolDescription, SkillState } from "./skill-tool.js";
 import { registerSkillResources } from "./skill-resources.js";
+import { registerSkillPrompts, refreshPrompts, PromptRegistry } from "./skill-prompts.js";
 import {
   createSubscriptionManager,
   registerSubscriptionHandlers,
@@ -138,12 +139,14 @@ const SKILL_REFRESH_DEBOUNCE_MS = 500;
  * @param skillsDirs - The configured skill directories
  * @param server - The MCP server instance
  * @param skillTool - The registered skill tool to update
+ * @param promptRegistry - For refreshing skill prompts
  * @param subscriptionManager - For refreshing resource subscriptions
  */
 function refreshSkills(
   skillsDirs: string[],
   server: McpServer,
   skillTool: RegisteredTool,
+  promptRegistry: PromptRegistry,
   subscriptionManager: SubscriptionManager
 ): void {
   console.error("Refreshing skills...");
@@ -161,6 +164,9 @@ function refreshSkills(
   skillTool.update({
     description: getToolDescription(skillState),
   });
+
+  // Refresh prompts to match new skill state
+  refreshPrompts(server, skillState, promptRegistry);
 
   // Refresh resource subscriptions to match new skill state
   refreshSubscriptions(subscriptionManager, skillState, (uri) => {
@@ -185,12 +191,14 @@ function refreshSkills(
  * @param skillsDirs - The configured skill directories
  * @param server - The MCP server instance
  * @param skillTool - The registered skill tool to update
+ * @param promptRegistry - For refreshing skill prompts
  * @param subscriptionManager - For refreshing subscriptions
  */
 function watchSkillDirectories(
   skillsDirs: string[],
   server: McpServer,
   skillTool: RegisteredTool,
+  promptRegistry: PromptRegistry,
   subscriptionManager: SubscriptionManager
 ): void {
   let refreshTimeout: NodeJS.Timeout | null = null;
@@ -201,7 +209,7 @@ function watchSkillDirectories(
     }
     refreshTimeout = setTimeout(() => {
       refreshTimeout = null;
-      refreshSkills(skillsDirs, server, skillTool, subscriptionManager);
+      refreshSkills(skillsDirs, server, skillTool, promptRegistry, subscriptionManager);
     }, SKILL_REFRESH_DEBOUNCE_MS);
   };
 
@@ -311,19 +319,21 @@ async function main() {
       capabilities: {
         tools: { listChanged: true },
         resources: { subscribe: true, listChanged: true },
+        prompts: { listChanged: true },
       },
     }
   );
 
-  // Register tools and resources
+  // Register tools, resources, and prompts
   const skillTool = registerSkillTool(server, skillState);
   registerSkillResources(server, skillState);
+  const promptRegistry = registerSkillPrompts(server, skillState);
 
   // Register subscription handlers for resource file watching
   registerSubscriptionHandlers(server, skillState, subscriptionManager);
 
   // Set up file watchers for skill directory changes
-  watchSkillDirectories(skillsDirs, server, skillTool, subscriptionManager);
+  watchSkillDirectories(skillsDirs, server, skillTool, promptRegistry, subscriptionManager);
 
   // Connect via stdio transport
   const transport = new StdioServerTransport();
