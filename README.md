@@ -9,6 +9,7 @@ An MCP server that jacks [Agent Skills](https://agentskills.io) directly into yo
 - **Dynamic Skill Discovery** - Watches skill directories and automatically refreshes when skills change
 - **Tool List Changed Notifications** - Sends `tools/listChanged` so clients can refresh available skills
 - **Skill Tool** - Load full skill content on demand (progressive disclosure)
+- **MCP Prompts** - Load skills via `/skill` prompt with auto-completion or per-skill prompts
 - **MCP Resources** - Access skills via `skill://` URIs with batch collection support
 - **Resource Subscriptions** - Real-time file watching with `notifications/resources/updated`
 
@@ -87,16 +88,20 @@ The server implements the [Agent Skills](https://agentskills.io) progressive dis
 │   ↓                                                      │
 │ MCP Client connects                                      │
 │   • Skill tool description includes available skills     │
+│   • Prompts registered for each skill                    │
 │   ↓                                                      │
 │ LLM sees skill metadata in tool description              │
 │   ↓                                                      │
 │ SKILL.md added/modified/removed                          │
 │   • Server re-discovers skills                           │
 │   • Updates skill tool description                       │
+│   • Updates prompt list (add/remove/modify)              │
 │   • Sends tools/listChanged notification                 │
-│   • Client refreshes tool definitions                    │
+│   • Sends prompts/listChanged notification               │
+│   • Client refreshes tool and prompt definitions         │
 │   ↓                                                      │
-│ LLM calls "skill" tool with skill name                   │
+│ User invokes /skill prompt or /skill-name prompt         │
+│   OR LLM calls "skill" tool with skill name              │
 │   ↓                                                      │
 │ Server returns full SKILL.md content                     │
 │   ↓                                                      │
@@ -105,14 +110,41 @@ The server implements the [Agent Skills](https://agentskills.io) progressive dis
 └─────────────────────────────────────────────────────────┘
 ```
 
-## Tools vs Resources
+## Tools vs Resources vs Prompts
 
-This server exposes skills via both **tools** and **resources**:
+This server exposes skills via **tools**, **resources**, and **prompts**:
 
 - **Tools** (`skill`, `skill-resource`) - For your agent to use autonomously. The LLM sees available skills in the tool description and calls them as needed.
+- **Prompts** (`/skill`, `/skill-name`) - For explicit user invocation. Use `/skill` with auto-completion or select a skill directly by name.
 - **Resources** (`skill://` URIs) - For manual selection in apps that support it (e.g., Claude Desktop's resource picker). Useful when you want to explicitly attach a skill to the conversation.
 
-Most users will rely on tools for automatic skill activation. Resources provide an alternative for manual control.
+Most users will rely on tools for automatic skill activation. Prompts provide user-initiated loading with auto-completion. Resources provide an alternative for manual control.
+
+## Progressive Disclosure Design
+
+This server implements the [Agent Skills progressive disclosure pattern](https://agentskills.io/specification#progressive-disclosure), which structures skills for efficient context usage:
+
+| Level | Tokens | What's loaded | When |
+|-------|--------|---------------|------|
+| **Metadata** | ~100 | `name` and `description` | At startup, for all skills |
+| **Instructions** | < 5000 | Full SKILL.md body | When skill is activated |
+| **Resources** | As needed | Files in `scripts/`, `references/`, `assets/` | On demand via `skill-resource` |
+
+### How it works
+
+1. **Discovery** - Server loads metadata from all skills into the `skill` tool description
+2. **Activation** - When a skill is loaded (via tool, prompt, or resource), only the SKILL.md content is returned
+3. **Execution** - SKILL.md references additional files; agent fetches them with `skill-resource` as needed
+
+### Why SKILL.md documents its own resources
+
+The server doesn't automatically list all files in a skill directory. Instead, skill authors document available resources directly in their SKILL.md (e.g., "Copy the template from `templates/server.ts`"). This design choice follows the spec because:
+
+- **Skill authors know best** - They decide which files are relevant and when to use them
+- **Context efficiency** - Loading everything upfront wastes tokens on files the agent may not need
+- **Natural flow** - SKILL.md guides the agent through resources in a logical order
+
+**For skill authors:** Reference files using relative paths from the skill root (e.g., `snippets/tool.ts`, `references/api.md`). Keep your main SKILL.md under 500 lines; move detailed reference material to separate files. See the [Agent Skills specification](https://agentskills.io/specification) for complete authoring guidelines.
 
 ## Tools
 
@@ -161,6 +193,38 @@ Returns all files in the directory as multiple content items.
 ```
 
 **Security:** Path traversal is prevented - only files within the skill directory can be accessed.
+
+## Prompts
+
+Skills can be loaded via MCP [Prompts](https://modelcontextprotocol.io/specification/2025-11-05/server/prompts) for explicit user invocation.
+
+### `/skill` Prompt
+
+Load a skill by name with auto-completion support.
+
+**Arguments:**
+- `name` (string, required) - Skill name with auto-completion
+
+The prompt description includes all available skills for discoverability. As you type the skill name, matching skills are suggested.
+
+### Per-Skill Prompts
+
+Each discovered skill is also registered as its own prompt (e.g., `/mcp-server-ts`, `/algorithmic-art`).
+
+- No arguments needed - just select and invoke
+- Description shows the skill's own description
+- List updates dynamically as skills change
+
+**Example:** If you have a skill named `mcp-server-ts`, you can invoke it directly as `/mcp-server-ts`.
+
+### Content Annotations
+
+Prompt responses include MCP [content annotations](https://modelcontextprotocol.io/specification/2025-11-25/server/prompts#embedded-resources) for proper handling:
+
+- `audience: ["assistant"]` - Content is intended for the LLM, not the user
+- `priority: 1.0` - High priority content that should be included in context
+
+Prompts return embedded resources with the skill's `skill://` URI, allowing clients to track the content source.
 
 ## Resources
 
@@ -223,8 +287,9 @@ The server watches skill directories for changes. When SKILL.md files are added,
 
 1. Skills are re-discovered from all configured directories
 2. The `skill` tool's description is updated with current skill names and metadata
-3. `tools/listChanged` notification is sent to connected clients
-4. Clients that support this notification will refresh tool definitions
+3. Per-skill prompts are added, removed, or updated accordingly
+4. `tools/listChanged` and `prompts/listChanged` notifications are sent to connected clients
+5. Clients that support these notifications will refresh tool and prompt definitions
 
 ## Skill Metadata Format
 
