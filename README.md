@@ -122,19 +122,29 @@ Most users will rely on tools for automatic skill activation. Prompts provide us
 
 ## Progressive Disclosure Design
 
-This server follows the [Agent Skills](https://agentskills.io) progressive disclosure pattern:
+This server implements the [Agent Skills progressive disclosure pattern](https://agentskills.io/specification#progressive-disclosure), which structures skills for efficient context usage:
 
-1. **SKILL.md is the entry point** - When a skill is loaded (via tool, prompt, or resource), only the SKILL.md content is returned initially
-2. **SKILL.md documents available resources** - Skill authors are responsible for referencing additional files in their SKILL.md (e.g., "Copy the template from `templates/server.ts`")
-3. **Agent fetches resources on demand** - When the agent sees a file reference in SKILL.md, it uses `skill-resource` to fetch that specific file
+| Level | Tokens | What's loaded | When |
+|-------|--------|---------------|------|
+| **Metadata** | ~100 | `name` and `description` | At startup, for all skills |
+| **Instructions** | < 5000 | Full SKILL.md body | When skill is activated |
+| **Resources** | As needed | Files in `scripts/`, `references/`, `assets/` | On demand via `skill-resource` |
 
-This design keeps initial context small while giving skill authors full control over how resources are presented. The server doesn't automatically list all files because:
+### How it works
+
+1. **Discovery** - Server loads metadata from all skills into the `skill` tool description
+2. **Activation** - When a skill is loaded (via tool, prompt, or resource), only the SKILL.md content is returned
+3. **Execution** - SKILL.md references additional files; agent fetches them with `skill-resource` as needed
+
+### Why SKILL.md documents its own resources
+
+The server doesn't automatically list all files in a skill directory. Instead, skill authors document available resources directly in their SKILL.md (e.g., "Copy the template from `templates/server.ts`"). This design choice follows the spec because:
 
 - **Skill authors know best** - They decide which files are relevant and when to use them
 - **Context efficiency** - Loading everything upfront wastes tokens on files the agent may not need
-- **Natural flow** - SKILL.md guides the agent through the skill's resources in a logical order
+- **Natural flow** - SKILL.md guides the agent through resources in a logical order
 
-**For skill authors:** Make sure your SKILL.md clearly documents any additional resources the agent should use. Reference files by their relative path (e.g., `snippets/tool.ts`, `references/api.md`) so the agent knows what to fetch with `skill-resource`.
+**For skill authors:** Reference files using relative paths from the skill root (e.g., `snippets/tool.ts`, `references/api.md`). Keep your main SKILL.md under 500 lines; move detailed reference material to separate files. See the [Agent Skills specification](https://agentskills.io/specification) for complete authoring guidelines.
 
 ## Tools
 
