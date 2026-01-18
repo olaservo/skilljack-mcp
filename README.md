@@ -236,7 +236,8 @@ Skills are also accessible via MCP [Resources](https://modelcontextprotocol.io/s
 |-----|---------|
 | `skill://{name}` | Single skill's SKILL.md content |
 | `skill://{name}/` | All files in skill directory (collection) |
-| `skill://{name}/{path}` | Specific file within skill |
+
+Individual file URIs (`skill://{name}/{path}`) are not listed as resources to reduce noise. Use the `skill-resource` tool to fetch specific files on demand.
 
 ### Resource Subscriptions
 

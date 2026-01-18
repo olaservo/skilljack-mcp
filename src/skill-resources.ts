@@ -8,9 +8,12 @@
  * skill updates when MCP roots change.
  *
  * URI Scheme:
- *   skill://{skillName}         -> SKILL.md content (template)
- *   skill://{skillName}/        -> Collection: all files in skill directory
- *   skill://{skillName}/{path}  -> File within skill directory (template)
+ *   skill://{skillName}   -> SKILL.md content (template)
+ *   skill://{skillName}/  -> Collection: all files in skill directory
+ *
+ * Note: Individual file URIs (skill://{skillName}/{path}) are not listed
+ * as resources to reduce noise. Use the skill-resource tool to fetch
+ * specific files on demand.
  */
 
 import * as fs from "node:fs";
@@ -57,11 +60,12 @@ export function registerSkillResources(
   // Register template for individual skill SKILL.md files
   registerSkillTemplate(server, skillState);
 
-  // Register collection resource for skill directories (must be before file template)
+  // Register collection resource for skill directories
   registerSkillDirectoryCollection(server, skillState);
 
-  // Register resource template for skill files
-  registerSkillFileTemplate(server, skillState);
+  // Note: Individual file resources (skill://{name}/{path}) are intentionally
+  // not registered to reduce noise. Use the skill-resource tool to fetch
+  // specific files on demand.
 }
 
 /**
@@ -240,116 +244,3 @@ function registerSkillTemplate(
   );
 }
 
-/**
- * Register the resource template for accessing files within skills.
- *
- * URI Pattern: skill://{skillName}/{filePath}
- */
-function registerSkillFileTemplate(
-  server: McpServer,
-  skillState: SkillState
-): void {
-  server.registerResource(
-    "Skill File",
-    new ResourceTemplate("skill://{skillName}/{+filePath}", {
-      list: async () => {
-        // Return all listable skill files (dynamic based on current skillMap)
-        const resources: Array<{ uri: string; name: string; mimeType: string }> = [];
-
-        for (const [name, skill] of skillState.skillMap) {
-          const skillDir = path.dirname(skill.path);
-          const files = listSkillFiles(skillDir);
-
-          for (const file of files) {
-            const uri = `skill://${encodeURIComponent(name)}/${file}`;
-            resources.push({
-              uri,
-              name: `${name}/${file}`,
-              mimeType: getMimeType(file),
-            });
-          }
-        }
-
-        return { resources };
-      },
-      complete: {
-        skillName: (value: string) => {
-          const names = Array.from(skillState.skillMap.keys());
-          return names.filter((name) => name.toLowerCase().startsWith(value.toLowerCase()));
-        },
-      },
-    }),
-    {
-      mimeType: "text/plain",
-      description: "Files within a skill directory (scripts, snippets, assets, etc.)",
-    },
-    async (resourceUri, variables) => {
-      // Extract skill name and file path from URI
-      const uriStr = resourceUri.toString();
-      const match = uriStr.match(/^skill:\/\/([^/]+)\/(.+)$/);
-
-      if (!match) {
-        throw new Error(`Invalid skill file URI: ${uriStr}`);
-      }
-
-      const skillName = decodeURIComponent(match[1]);
-      const filePath = match[2];
-
-      const skill = skillState.skillMap.get(skillName);
-      if (!skill) {
-        const available = Array.from(skillState.skillMap.keys()).join(", ");
-        throw new Error(`Skill "${skillName}" not found. Available: ${available || "none"}`);
-      }
-
-      const skillDir = path.dirname(skill.path);
-      const fullPath = path.resolve(skillDir, filePath);
-
-      // Security: Validate path is within skill directory
-      if (!isPathWithinBase(fullPath, skillDir)) {
-        throw new Error(`Path "${filePath}" is outside the skill directory`);
-      }
-
-      // Check file exists
-      if (!fs.existsSync(fullPath)) {
-        const files = listSkillFiles(skillDir).slice(0, 10);
-        throw new Error(
-          `File "${filePath}" not found in skill "${skillName}". ` +
-            `Available: ${files.join(", ")}${files.length >= 10 ? "..." : ""}`
-        );
-      }
-
-      const stat = fs.statSync(fullPath);
-
-      // Reject symlinks
-      if (stat.isSymbolicLink()) {
-        throw new Error(`Cannot read symlink "${filePath}"`);
-      }
-
-      // Reject directories
-      if (stat.isDirectory()) {
-        const files = listSkillFiles(skillDir, filePath);
-        throw new Error(`"${filePath}" is a directory. Files within: ${files.join(", ")}`);
-      }
-
-      // Check file size
-      if (stat.size > MAX_FILE_SIZE) {
-        const sizeMB = (stat.size / 1024 / 1024).toFixed(2);
-        throw new Error(`File too large (${sizeMB}MB). Maximum: 10MB`);
-      }
-
-      // Read and return content
-      const content = fs.readFileSync(fullPath, "utf-8");
-      const mimeType = getMimeType(fullPath);
-
-      return {
-        contents: [
-          {
-            uri: uriStr,
-            mimeType,
-            text: content,
-          },
-        ],
-      };
-    }
-  );
-}

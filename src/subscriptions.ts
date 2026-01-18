@@ -9,7 +9,7 @@
  * - skill://              → Watch all skill directories
  * - skill://{name}        → Watch that skill's SKILL.md
  * - skill://{name}/       → Watch entire skill directory (directory collection)
- * - skill://{name}/{path} → Watch specific file
+ * - skill://{name}/{path} → Watch specific file (subscribable but not listed as resource)
  */
 
 import chokidar, { FSWatcher } from "chokidar";
