@@ -1,5 +1,5 @@
 {
-  "prompt": "Hello! Can you greet me?",
+  "prompt": "Hello! Please use the greeting skill to greet me.",
   "evalConfig": {
     "expectedSkillName": "greeting",
     "expectedOutput": "SKILLJACK_GREETING_SUCCESS"

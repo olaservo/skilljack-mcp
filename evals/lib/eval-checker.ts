@@ -80,9 +80,9 @@ export function analyzeSession(entries: SessionLogEntry[], config: EvalConfig, m
             } else if (isSkillTool(c.name, mode)) {
               skillToolCalled = true;
               activated = true;
-              const input = c.input as { name?: string; skill_name?: string };
-              // Native Skill tool uses skill_name, MCP uses name
-              skillName = input?.skill_name || input?.name;
+              const input = c.input as { name?: string; skill_name?: string; skill?: string };
+              // Native Skill tool uses skill, MCP uses name
+              skillName = input?.skill || input?.skill_name || input?.name;
             }
           }
         }
@@ -98,9 +98,9 @@ export function analyzeSession(entries: SessionLogEntry[], config: EvalConfig, m
       } else if (isSkillTool(data.name, mode)) {
         skillToolCalled = true;
         activated = true;
-        const input = data.input as { name?: string; skill_name?: string };
-        // Native Skill tool uses skill_name, MCP uses name
-        skillName = input?.skill_name || input?.name;
+        const input = data.input as { name?: string; skill_name?: string; skill?: string };
+        // Native Skill tool uses skill, MCP uses name
+        skillName = input?.skill || input?.skill_name || input?.name;
       }
     }
   }

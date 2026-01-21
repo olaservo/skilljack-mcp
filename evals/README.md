@@ -58,6 +58,7 @@ npm run eval -- --model=claude-haiku-4-5-20251001
 - Uses SDK's native skill discovery (`settingSources`)
 - Cleaned up after eval completes
 - Tests native skill file support via Agent SDK
+- **Note**: Requires `systemPrompt: { type: 'preset', preset: 'claude_code' }` — the SDK's default minimal prompt lacks skill awareness
 
 ### CLI Native Mode
 - Skills copied to `.claude/skills/` before eval
@@ -78,7 +79,6 @@ npm run eval -- --model=claude-haiku-4-5-20251001
 ```
 evals/
 ├── eval.ts              # Main eval harness
-├── FINDINGS.md          # Investigation findings on skill activation
 ├── lib/
 │   ├── metrics.ts       # Logging and metrics utilities
 │   ├── eval-checker.ts  # Pass/fail analysis logic

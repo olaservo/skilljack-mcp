@@ -116,11 +116,17 @@ export async function buildOptions(config: BuildOptionsConfig): Promise<any> {
     };
   } else if (mode === "native") {
     // Native mode: use settingSources and Skill tool
+    // Must use claude_code preset to get skill awareness in system prompt
     await setupNativeSkills(skillsDir);
     await ensureSettingsJson();
 
     options = {
       cwd: process.cwd(),
+      // Use Claude Code's system prompt which includes skill awareness
+      // Without this preset, the SDK uses a minimal prompt without skill instructions
+      systemPrompt: systemPrompt
+        ? { type: 'preset' as const, preset: 'claude_code' as const, append: systemPrompt }
+        : { type: 'preset' as const, preset: 'claude_code' as const },
       settingSources: ['project' as const],
       allowedTools: ["Bash", "Read", "Write", "Skill"],
       permissionMode: "default" as const,
@@ -152,8 +158,9 @@ export async function buildOptions(config: BuildOptionsConfig): Promise<any> {
     };
   }
 
-  // Only include systemPrompt if provided (otherwise use Claude Code default)
-  if (systemPrompt) {
+  // For MCP mode, optionally include custom systemPrompt
+  // (native mode already handles systemPrompt with the claude_code preset above)
+  if (mode === "mcp" && systemPrompt) {
     options.systemPrompt = systemPrompt;
   }
 
