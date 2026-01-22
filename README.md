@@ -323,13 +323,30 @@ Each skill subdirectory must contain a `SKILL.md` file with YAML frontmatter inc
 
 ## Testing
 
-```bash
-# Build first
-npm run build
+### Manual Testing with MCP Inspector
 
-# Test with MCP Inspector
-npx @modelcontextprotocol/inspector@latest node dist/index.js /path/to/skills
+```bash
+npm run build
+npm run inspector -- /path/to/skills
 ```
+
+### Automated Evals
+
+The `evals/` directory contains an evaluation framework for testing skill activation across different delivery modes.
+
+```bash
+# Install dependencies (includes claude-agent-sdk for evals)
+npm install
+
+# Build and run evals
+npm run build
+npm run eval                              # Default: greeting task, MCP mode
+npm run eval -- --task=xlsx-openpyxl      # Specific task
+npm run eval -- --mode=native             # Native skill mode
+npm run eval -- --mode=mcp+native         # Both MCP and native enabled
+```
+
+See [evals/README.md](evals/README.md) for details on available tasks, modes, and findings about activation behavior differences.
 
 ## Related
 
