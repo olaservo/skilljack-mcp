@@ -1,0 +1,8 @@
+{
+  "prompt": "Generate a config.json file for a project called 'my-app' with description 'A test application' and author 'Test User'.",
+  "evalConfig": {
+    "expectedSkillName": "template-generator",
+    "expectedOutput": "SKILLJACK_TEMPLATE_LOADED",
+    "expectResourceLoad": true
+  }
+}

@@ -21,7 +21,13 @@ npm-debug.log*
 # Environment
 .env
 .env.local
-.claude/settings.local.json
+.claude/
 
 # Testing
 TEST_PLAN.md
+
+# Evals
+evals/logs/
+evals/results/
+!evals/logs/.gitkeep
+!evals/results/.gitkeep

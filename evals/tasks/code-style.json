@@ -1,0 +1,7 @@
+{
+  "prompt": "Write me a simple JavaScript function that adds two numbers.",
+  "evalConfig": {
+    "expectedSkillName": "code-style",
+    "expectedOutput": "SKILLJACK_CODE_FORMATTED"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "prompt": "I'm building a financial forecast model in Excel. What formatting conventions should I use for inputs versus calculated cells?",
+  "evalConfig": {
+    "expectedSkillName": "xlsx",
+    "expectedOutput": "blue"
+  }
+}

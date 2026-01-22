@@ -1,0 +1,7 @@
+{
+  "prompt": "I calculated totals in pandas and want to write them to Excel. Should I just write the calculated values?",
+  "evalConfig": {
+    "expectedSkillName": "xlsx",
+    "expectedOutput": "formula"
+  }
+}

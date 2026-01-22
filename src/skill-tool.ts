@@ -47,7 +47,11 @@ const SkillSchema = z.object({
 export function getToolDescription(skillState: SkillState): string {
   const usage =
     "Load a skill's full instructions. Returns the complete SKILL.md content " +
-    "with step-by-step guidance, examples, and file references to follow.\n\n";
+    "with step-by-step guidance, examples, and file references to follow.\n\n" +
+    "IMPORTANT: When a skill is relevant to the user's task, you must invoke this tool " +
+    "IMMEDIATELY as your first action. NEVER just announce or mention a skill without " +
+    "actually calling this tool. This is a BLOCKING REQUIREMENT: invoke this tool BEFORE " +
+    "generating any other response about the task.\n\n";
 
   const skills = Array.from(skillState.skillMap.values());
   return usage + generateInstructions(skills);
