@@ -1,0 +1,7 @@
+{
+  "prompt": "I created an Excel file with quarterly revenue projections and formulas. How do I verify the formulas are working correctly?",
+  "evalConfig": {
+    "expectedSkillName": "xlsx",
+    "expectedOutput": "recalc.py"
+  }
+}

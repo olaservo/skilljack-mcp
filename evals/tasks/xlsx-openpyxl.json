@@ -1,0 +1,7 @@
+{
+  "prompt": "I need to create an Excel spreadsheet with formulas that calculate running totals. The file needs to be editable by my team. What approach should I take?",
+  "evalConfig": {
+    "expectedSkillName": "xlsx",
+    "expectedOutput": "openpyxl"
+  }
+}

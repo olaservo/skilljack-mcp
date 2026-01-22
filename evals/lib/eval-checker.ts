@@ -15,6 +15,9 @@ function isSkillTool(toolName: string, mode: EvalMode): boolean {
   if (mode === "native" || mode === "cli-native") {
     // Native/CLI mode uses "Skill" tool
     return toolName === "Skill";
+  } else if (mode === "mcp+native") {
+    // Combined mode: either native Skill OR MCP skill tool
+    return toolName === "Skill" || (toolName.includes('skill') && !toolName.includes('skill-resource'));
   } else {
     // MCP mode uses mcp__skilljack__skill
     return toolName.includes('skill') && !toolName.includes('skill-resource');
@@ -29,6 +32,9 @@ function isSkillResourceTool(toolName: string, mode: EvalMode): boolean {
     // Native/CLI mode - skill resources might be loaded differently
     // For now, check if it's reading from skill directory
     return false; // Native/CLI doesn't have separate resource tool
+  } else if (mode === "mcp+native") {
+    // Combined mode: MCP skill-resource tool
+    return toolName.includes('skill-resource');
   } else {
     // MCP mode uses mcp__skilljack__skill-resource
     return toolName.includes('skill-resource');

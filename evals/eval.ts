@@ -34,10 +34,10 @@ function parseArgs(): CLIArgs {
       task = arg.split("=")[1];
     } else if (arg.startsWith("--mode=")) {
       const modeArg = arg.split("=")[1];
-      if (modeArg === "native" || modeArg === "mcp" || modeArg === "cli-native") {
+      if (modeArg === "native" || modeArg === "mcp" || modeArg === "cli-native" || modeArg === "mcp+native") {
         mode = modeArg;
       } else {
-        console.error(`Invalid mode: ${modeArg}. Use 'mcp', 'native', or 'cli-native'.`);
+        console.error(`Invalid mode: ${modeArg}. Use 'mcp', 'native', 'cli-native', or 'mcp+native'.`);
         process.exit(1);
       }
     } else if (arg.startsWith("--model=")) {
@@ -49,17 +49,19 @@ Usage: tsx evals/eval.ts [options]
 Options:
   --task=<task-name>   Specify the eval task to run (default: greeting)
                        Available: greeting, code-style, template-generator
-  --mode=<mcp|native|cli-native>  Skill delivery mode (default: mcp)
+  --mode=<mcp|native|cli-native|mcp+native>  Skill delivery mode (default: mcp)
                        mcp: Use skilljack MCP server via Agent SDK
                        native: Use native .claude/skills/ via Agent SDK
                        cli-native: Use Claude Code CLI directly (non-interactive)
+                       mcp+native: Both MCP server AND native skills enabled
   --model=<model-id>   Specify the Claude model to use
   --help, -h           Show this help message
 
 Examples:
   tsx evals/eval.ts                          # Run default task with MCP
   tsx evals/eval.ts --mode=native            # Run with native skills via SDK
-  tsx evals/eval.ts --mode=cli-native               # Run with Claude Code CLI directly
+  tsx evals/eval.ts --mode=cli-native        # Run with Claude Code CLI directly
+  tsx evals/eval.ts --mode=mcp+native        # Run with both MCP and native skills
   tsx evals/eval.ts --task=greeting --mode=mcp
   tsx evals/eval.ts --task=code-style --mode=cli-native
 `);
@@ -218,6 +220,9 @@ async function main() {
   console.log(`\nMode: ${mode}`);
   if (mode === "mcp") {
     console.log(`MCP Servers: ${Object.keys(options.mcpServers || {}).join(', ')}`);
+  } else if (mode === "mcp+native") {
+    console.log(`MCP Servers: ${Object.keys(options.mcpServers || {}).join(', ')}`);
+    console.log(`Skills Source: .claude/skills/ (also enabled)`);
   } else if (mode === "cli-native") {
     console.log(`Using Claude Code CLI directly`);
   } else {
@@ -323,8 +328,8 @@ async function main() {
     // Save result summary
     await saveResultSummary(taskName, evalResult, logger.getSessionId(), taskConfig.evalConfig, mode);
 
-    // Cleanup native skills if in native or cli-native mode
-    if (mode === "native" || mode === "cli-native") {
+    // Cleanup native skills if in native, cli-native, or mcp+native mode
+    if (mode === "native" || mode === "cli-native" || mode === "mcp+native") {
       await cleanupNativeSkills();
     }
 

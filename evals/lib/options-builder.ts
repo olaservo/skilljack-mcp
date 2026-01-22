@@ -2,7 +2,7 @@
 import * as path from "path";
 import * as fs from "fs/promises";
 
-export type EvalMode = "mcp" | "native" | "cli-native";
+export type EvalMode = "mcp" | "native" | "cli-native" | "mcp+native";
 
 export interface BuildOptionsConfig {
   mode: EvalMode;
@@ -132,8 +132,42 @@ export async function buildOptions(config: BuildOptionsConfig): Promise<any> {
       permissionMode: "default" as const,
       model: modelId
     };
+  } else if (mode === "mcp+native") {
+    // Combined mode: both MCP server AND native skills enabled
+    // Tests behavior when both skill delivery mechanisms are available
+    await setupNativeSkills(skillsDir);
+    await ensureSettingsJson();
+
+    const absoluteSkillsDir = path.resolve(skillsDir);
+    const serverPath = path.resolve('./dist/index.js');
+
+    // Verify server exists
+    try {
+      await fs.access(serverPath);
+    } catch {
+      throw new Error(`Skilljack MCP server not found at ${serverPath}. Run 'npm run build' first.`);
+    }
+
+    options = {
+      cwd: process.cwd(),
+      mcpServers: {
+        skilljack: {
+          command: "node",
+          args: [serverPath, absoluteSkillsDir]
+        }
+      },
+      // Use Claude Code's system prompt for skill awareness
+      systemPrompt: systemPrompt
+        ? { type: 'preset' as const, preset: 'claude_code' as const, append: systemPrompt }
+        : { type: 'preset' as const, preset: 'claude_code' as const },
+      settingSources: ['project' as const],
+      // Allow both MCP and native skill tools
+      allowedTools: ["Bash", "Read", "Write", "Skill", "mcp__skilljack"],
+      permissionMode: "default" as const,
+      model: modelId
+    };
   } else {
-    // MCP mode: use skilljack server
+    // MCP mode: use skilljack server only
     const absoluteSkillsDir = path.resolve(skillsDir);
     const serverPath = path.resolve('./dist/index.js');
 
