@@ -87,8 +87,8 @@ npm run eval -- --model=claude-haiku-4-5-20251001
 
 ## Test Skills
 
-The `xlsx` skill used for testing is from the official Anthropic skills repository:
-https://github.com/anthropics/skills/tree/main/skills/xlsx
+- **xlsx**: Real skill from the official Anthropic skills repository: https://github.com/anthropics/skills/tree/main/skills/xlsx
+- **greeting**, **code-style**, **template-generator**: Synthetic skills created for eval testing with marker phrases (e.g., `SKILLJACK_GREETING_SUCCESS`) for verifiable pass/fail criteria
 
 ## Structure
 
