@@ -80,10 +80,15 @@ npm run eval -- --model=claude-haiku-4-5-20251001
 | **greeting** | ✓ | - | ✓ | Basic skill activation |
 | **code-style** | ✓ | - | ✓ | Skill activation for code tasks |
 | **template-generator** | ✓ | ✓ | ✓ | Progressive disclosure (skill → resource) |
-| **xlsx-openpyxl** | ✓ | - | ✓ | Library selection: openpyxl path |
+| **xlsx-openpyxl** | ✓ | - | ✓ | Excel formulas/formatting |
 | **xlsx-formulas** | ✓ | - | ✓ | Formula vs hardcoded guidance |
 | **xlsx-financial** | ✓ | - | ✓ | Financial model conventions |
 | **xlsx-verify** | ✓ | - | ✓ | Verification workflow |
+
+## Test Skills
+
+The `xlsx` skill used for testing is from the official Anthropic skills repository:
+https://github.com/anthropics/skills/tree/main/skills/xlsx
 
 ## Structure
 
