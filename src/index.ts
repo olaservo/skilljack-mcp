@@ -9,6 +9,7 @@
  *   skilljack-mcp /path/to/skills [/path2 ...]   # One or more directories
  *   SKILLS_DIR=/path/to/skills skilljack-mcp    # Single directory via env
  *   SKILLS_DIR=/path1,/path2 skilljack-mcp      # Multiple (comma-separated)
+ *   (or configure via the skill-config UI)
  */
 
 import { McpServer, RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -26,6 +27,8 @@ import {
   refreshSubscriptions,
   SubscriptionManager,
 } from "./subscriptions.js";
+import { getActiveDirectories } from "./skill-config.js";
+import { registerSkillConfigTool } from "./skill-config-tool.js";
 
 /**
  * Subdirectories to check for skills within the configured directory.
@@ -33,45 +36,9 @@ import {
 const SKILL_SUBDIRS = [".claude/skills", "skills"];
 
 /**
- * Separator for multiple paths in SKILLS_DIR environment variable.
- * Comma works cross-platform (not valid in file paths on any OS).
+ * Current skill directories (mutable to support UI-driven changes).
  */
-const PATH_LIST_SEPARATOR = ",";
-
-/**
- * Get the skills directories from command line args and/or environment.
- * Returns deduplicated, resolved paths.
- */
-function getSkillsDirs(): string[] {
-  const dirs: string[] = [];
-
-  // Collect all non-flag command-line arguments (comma-separated supported)
-  const args = process.argv.slice(2);
-  for (const arg of args) {
-    if (!arg.startsWith("-")) {
-      const paths = arg
-        .split(PATH_LIST_SEPARATOR)
-        .map((p) => p.trim())
-        .filter((p) => p.length > 0)
-        .map((p) => path.resolve(p));
-      dirs.push(...paths);
-    }
-  }
-
-  // Also check environment variable (comma-separated supported)
-  const envDir = process.env.SKILLS_DIR;
-  if (envDir) {
-    const envPaths = envDir
-      .split(PATH_LIST_SEPARATOR)
-      .map((p) => p.trim())
-      .filter((p) => p.length > 0)
-      .map((p) => path.resolve(p));
-    dirs.push(...envPaths);
-  }
-
-  // Deduplicate by resolved path
-  return [...new Set(dirs)];
-}
+let currentSkillsDirs: string[] = [];
 
 /**
  * Shared state for skill management.
@@ -292,20 +259,21 @@ function watchSkillDirectories(
 const subscriptionManager = createSubscriptionManager();
 
 async function main() {
-  const skillsDirs = getSkillsDirs();
+  // Get skill directories from CLI args, env var, or config file
+  currentSkillsDirs = getActiveDirectories();
 
-  if (skillsDirs.length === 0) {
-    console.error("No skills directory configured.");
-    console.error("Usage: skilljack-mcp /path/to/skills [/path/to/more/skills ...]");
-    console.error("   or: SKILLS_DIR=/path/to/skills skilljack-mcp");
-    console.error("   or: SKILLS_DIR=/path1,/path2 skilljack-mcp");
-    process.exit(1);
+  // Allow starting with no directories - user can configure via UI
+  if (currentSkillsDirs.length === 0) {
+    console.error("No skills directories configured.");
+    console.error("You can configure directories via the skill-config tool UI,");
+    console.error("or use CLI args: skilljack-mcp /path/to/skills");
+    console.error("or set SKILLS_DIR environment variable.");
+  } else {
+    console.error(`Skills directories: ${currentSkillsDirs.join(", ")}`);
   }
 
-  console.error(`Skills directories: ${skillsDirs.join(", ")}`);
-
   // Discover skills at startup
-  const skills = discoverSkillsFromDirs(skillsDirs);
+  const skills = discoverSkillsFromDirs(currentSkillsDirs);
   skillState.skillMap = createSkillMap(skills);
   console.error(`Discovered ${skills.length} skill(s)`);
 
@@ -332,8 +300,19 @@ async function main() {
   // Register subscription handlers for resource file watching
   registerSubscriptionHandlers(server, skillState, subscriptionManager);
 
+  // Register skill-config tool for UI-based directory configuration
+  registerSkillConfigTool(server, skillState, () => {
+    // Callback when directories change via UI
+    // Reload directories from config and refresh skills
+    currentSkillsDirs = getActiveDirectories();
+    console.error(`Directories changed via UI. New directories: ${currentSkillsDirs.join(", ") || "(none)"}`);
+    refreshSkills(currentSkillsDirs, server, skillTool, promptRegistry, subscriptionManager);
+  });
+
   // Set up file watchers for skill directory changes
-  watchSkillDirectories(skillsDirs, server, skillTool, promptRegistry, subscriptionManager);
+  if (currentSkillsDirs.length > 0) {
+    watchSkillDirectories(currentSkillsDirs, server, skillTool, promptRegistry, subscriptionManager);
+  }
 
   // Connect via stdio transport
   const transport = new StdioServerTransport();

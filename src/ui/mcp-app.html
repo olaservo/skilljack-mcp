@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Skills Configuration</title>
+  <style>
+    :root {
+      --bg: #1a1a2e;
+      --bg-secondary: #16213e;
+      --bg-tertiary: #0f1729;
+      --text: #e8e8e8;
+      --text-secondary: #a0a0a0;
+      --accent: #6366f1;
+      --accent-hover: #818cf8;
+      --border: #2a2a4a;
+      --success: #22c55e;
+      --warning: #eab308;
+      --error: #ef4444;
+      --info: #3b82f6;
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #ffffff;
+        --bg-secondary: #f5f5f5;
+        --bg-tertiary: #e8e8e8;
+        --text: #1a1a1a;
+        --text-secondary: #666666;
+        --border: #e0e0e0;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 16px;
+      min-height: 100vh;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    h1 {
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .stats {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-top: 4px;
+    }
+
+    .add-btn {
+      padding: 8px 16px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .add-btn:hover {
+      background: var(--accent-hover);
+    }
+
+    .add-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* Override warning banner */
+    .override-banner {
+      background: var(--warning);
+      color: #000;
+      padding: 10px 14px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      font-size: 13px;
+      display: none;
+    }
+
+    .override-banner.visible {
+      display: block;
+    }
+
+    .override-banner strong {
+      font-weight: 600;
+    }
+
+    /* Directory list */
+    .directory-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .directory-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .directory-card.readonly {
+      opacity: 0.8;
+    }
+
+    .lock-icon {
+      font-size: 14px;
+      color: var(--text-secondary);
+    }
+
+    .directory-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .directory-path {
+      font-family: 'Fira Code', 'Consolas', monospace;
+      font-size: 13px;
+      word-break: break-all;
+    }
+
+    .directory-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    .source-badge {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+
+    .source-badge.cli {
+      background: var(--info);
+      color: white;
+    }
+
+    .source-badge.env {
+      background: #9333ea;
+      color: white;
+    }
+
+    .source-badge.config {
+      background: var(--success);
+      color: white;
+    }
+
+    .skill-count {
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+
+    .validity-icon {
+      font-size: 14px;
+    }
+
+    .validity-icon.valid {
+      color: var(--success);
+    }
+
+    .validity-icon.invalid {
+      color: var(--error);
+    }
+
+    .remove-btn {
+      padding: 6px 12px;
+      background: transparent;
+      color: var(--error);
+      border: 1px solid var(--error);
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .remove-btn:hover {
+      background: var(--error);
+      color: white;
+    }
+
+    /* Empty state */
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--text-secondary);
+    }
+
+    .empty-state p {
+      margin-bottom: 16px;
+    }
+
+    /* Loading state */
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: var(--text-secondary);
+    }
+
+    /* Modal */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.6);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .modal-overlay.active {
+      display: flex;
+    }
+
+    .modal {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      width: 90%;
+      max-width: 500px;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .modal-header h2 {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      font-size: 22px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    .modal-body {
+      padding: 18px;
+    }
+
+    .form-group {
+      margin-bottom: 14px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 6px;
+      color: var(--text);
+    }
+
+    .form-group input {
+      width: 100%;
+      padding: 10px 12px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 13px;
+      font-family: 'Fira Code', 'Consolas', monospace;
+    }
+
+    .form-group input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .form-hint {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-top: 4px;
+    }
+
+    .modal-footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      padding: 14px 18px;
+      border-top: 1px solid var(--border);
+    }
+
+    .btn {
+      padding: 10px 18px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      border: none;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-hover);
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-secondary {
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .btn-secondary:hover {
+      background: var(--border);
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      padding: 12px 18px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 13px;
+      z-index: 200;
+      display: none;
+      max-width: 300px;
+    }
+
+    .toast.success {
+      border-color: var(--success);
+      color: var(--success);
+    }
+
+    .toast.error {
+      border-color: var(--error);
+      color: var(--error);
+    }
+
+    .toast.visible {
+      display: block;
+      animation: slideIn 0.3s ease;
+    }
+
+    @keyframes slideIn {
+      from {
+        transform: translateX(100%);
+        opacity: 0;
+      }
+      to {
+        transform: translateX(0);
+        opacity: 1;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>Skills Directories</h1>
+      <div class="stats" id="stats">Loading...</div>
+    </div>
+    <button class="add-btn" id="add-btn" onclick="showAddModal()">
+      <span>+</span> Add Directory
+    </button>
+  </div>
+
+  <div class="override-banner" id="override-banner">
+    <strong>Note:</strong> Directories are being set by <span id="override-source">CLI args</span>.
+    Changes to the config file won't take effect while this override is active.
+  </div>
+
+  <div id="directory-list" class="directory-list">
+    <div class="loading">Loading directories...</div>
+  </div>
+
+  <!-- Add Directory Modal -->
+  <div class="modal-overlay" id="add-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Add Skills Directory</h2>
+        <button class="modal-close" onclick="closeAddModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="directory-path">Directory Path</label>
+          <input
+            type="text"
+            id="directory-path"
+            placeholder="/path/to/skills"
+            onkeydown="if(event.key === 'Enter') addDirectory()"
+          >
+          <div class="form-hint">
+            Absolute path to a directory containing skill folders (each with a SKILL.md file)
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeAddModal()">Cancel</button>
+        <button class="btn btn-primary" id="add-submit-btn" onclick="addDirectory()">Add Directory</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script type="module">
+    // Import ext-apps SDK
+    import { App, applyDocumentTheme, applyHostStyleVariables, applyHostFonts } from 'https://esm.sh/@modelcontextprotocol/ext-apps@0.4.1';
+
+    // State
+    let directories = [];
+    let activeSource = 'config';
+    let isOverridden = false;
+    let app = null;
+
+    // Elements
+    const directoryList = document.getElementById('directory-list');
+    const stats = document.getElementById('stats');
+    const addBtn = document.getElementById('add-btn');
+    const addModal = document.getElementById('add-modal');
+    const overrideBanner = document.getElementById('override-banner');
+    const overrideSource = document.getElementById('override-source');
+    const toast = document.getElementById('toast');
+    const directoryInput = document.getElementById('directory-path');
+    const addSubmitBtn = document.getElementById('add-submit-btn');
+
+    // Initialize MCP App
+    async function initApp() {
+      app = new App({ name: 'Skills Config', version: '1.0.0' });
+
+      // Handle tool result (initial data)
+      app.ontoolresult = (result) => {
+        console.log('Tool result:', result);
+        if (result.structuredContent) {
+          updateState(result.structuredContent);
+        }
+      };
+
+      // Handle host context changes (theme, styles, safe areas)
+      app.onhostcontextchanged = (ctx) => {
+        if (ctx.theme) {
+          applyDocumentTheme(ctx.theme);
+        }
+        if (ctx.styles?.variables) {
+          applyHostStyleVariables(ctx.styles.variables);
+        }
+        if (ctx.styles?.css?.fonts) {
+          applyHostFonts(ctx.styles.css.fonts);
+        }
+        // Handle safe area insets for mobile/notched devices
+        if (ctx.safeAreaInsets) {
+          const { top, right, bottom, left } = ctx.safeAreaInsets;
+          document.body.style.paddingTop = `${top + 16}px`;
+          document.body.style.paddingRight = `${right + 16}px`;
+          document.body.style.paddingBottom = `${bottom + 16}px`;
+          document.body.style.paddingLeft = `${left + 16}px`;
+        }
+      };
+
+      // Handle teardown
+      app.onteardown = async () => {
+        console.log('App teardown');
+        return {};
+      };
+
+      // Connect to host
+      await app.connect();
+      console.log('Connected to host');
+    }
+
+    // Update state from tool result
+    function updateState(data) {
+      if (data.directories) {
+        directories = data.directories;
+      }
+      if (data.activeSource) {
+        activeSource = data.activeSource;
+      }
+      if (data.isOverridden !== undefined) {
+        isOverridden = data.isOverridden;
+      }
+
+      render();
+    }
+
+    // Render the UI
+    function render() {
+      renderStats();
+      renderOverrideBanner();
+      renderDirectories();
+      updateAddButton();
+    }
+
+    function renderStats() {
+      const totalSkills = directories.reduce((sum, d) => sum + (d.skillCount || 0), 0);
+      const validCount = directories.filter(d => d.valid).length;
+      stats.textContent = `${directories.length} directories, ${totalSkills} skills total`;
+      if (validCount < directories.length) {
+        stats.textContent += ` (${directories.length - validCount} missing)`;
+      }
+    }
+
+    function renderOverrideBanner() {
+      if (isOverridden) {
+        overrideBanner.classList.add('visible');
+        overrideSource.textContent = activeSource === 'cli' ? 'CLI arguments' : 'SKILLS_DIR environment variable';
+      } else {
+        overrideBanner.classList.remove('visible');
+      }
+    }
+
+    function renderDirectories() {
+      if (directories.length === 0) {
+        directoryList.innerHTML = `
+          <div class="empty-state">
+            <p>No skills directories configured.</p>
+            <p>Click "Add Directory" to get started.</p>
+          </div>
+        `;
+        return;
+      }
+
+      directoryList.innerHTML = directories.map(dir => {
+        const isReadOnly = dir.source !== 'config';
+        return `
+          <div class="directory-card ${isReadOnly ? 'readonly' : ''}">
+            ${isReadOnly ? '<span class="lock-icon" title="Read-only: configured via ' + dir.source.toUpperCase() + '">&#128274;</span>' : ''}
+            <div class="directory-info">
+              <div class="directory-path">${escapeHtml(dir.path)}</div>
+              <div class="directory-meta">
+                <span class="source-badge ${dir.source}">${dir.source.toUpperCase()}</span>
+                <span class="skill-count">${dir.skillCount} skill${dir.skillCount !== 1 ? 's' : ''}</span>
+                <span class="validity-icon ${dir.valid ? 'valid' : 'invalid'}" title="${dir.valid ? 'Directory exists' : 'Directory not found'}">
+                  ${dir.valid ? '&#10003;' : '&#10007;'}
+                </span>
+              </div>
+            </div>
+            ${!isReadOnly ? `<button class="remove-btn" onclick="removeDirectory('${escapeJs(dir.path)}')">Remove</button>` : ''}
+          </div>
+        `;
+      }).join('');
+    }
+
+    function updateAddButton() {
+      // Disable add button if directories are overridden
+      addBtn.disabled = isOverridden;
+      if (isOverridden) {
+        addBtn.title = 'Cannot add directories while ' + (activeSource === 'cli' ? 'CLI args' : 'env var') + ' override is active';
+      } else {
+        addBtn.title = '';
+      }
+    }
+
+    // Add directory
+    window.addDirectory = async function() {
+      const path = directoryInput.value.trim();
+      if (!path) {
+        showToast('Please enter a directory path', 'error');
+        return;
+      }
+
+      addSubmitBtn.disabled = true;
+      addSubmitBtn.textContent = 'Adding...';
+
+      try {
+        const result = await app.callServerTool({
+          name: 'skill-config-add-directory',
+          arguments: { directory: path }
+        });
+
+        console.log('Add result:', result);
+
+        if (result.structuredContent?.success) {
+          updateState(result.structuredContent);
+          closeAddModal();
+          showToast('Directory added successfully', 'success');
+        } else {
+          showToast(result.structuredContent?.error || 'Failed to add directory', 'error');
+        }
+      } catch (error) {
+        console.error('Add directory error:', error);
+        showToast(error.message || 'Failed to add directory', 'error');
+      } finally {
+        addSubmitBtn.disabled = false;
+        addSubmitBtn.textContent = 'Add Directory';
+      }
+    };
+
+    // Remove directory
+    window.removeDirectory = async function(path) {
+      if (!confirm(`Remove "${path}" from configuration?`)) {
+        return;
+      }
+
+      try {
+        const result = await app.callServerTool({
+          name: 'skill-config-remove-directory',
+          arguments: { directory: path }
+        });
+
+        console.log('Remove result:', result);
+
+        if (result.structuredContent?.success) {
+          updateState(result.structuredContent);
+          showToast('Directory removed', 'success');
+        } else {
+          showToast(result.structuredContent?.error || 'Failed to remove directory', 'error');
+        }
+      } catch (error) {
+        console.error('Remove directory error:', error);
+        showToast(error.message || 'Failed to remove directory', 'error');
+      }
+    };
+
+    // Modal functions
+    window.showAddModal = function() {
+      if (isOverridden) {
+        showToast('Cannot add directories while override is active', 'error');
+        return;
+      }
+      directoryInput.value = '';
+      addModal.classList.add('active');
+      directoryInput.focus();
+    };
+
+    window.closeAddModal = function() {
+      addModal.classList.remove('active');
+    };
+
+    // Toast
+    function showToast(message, type = 'success') {
+      toast.textContent = message;
+      toast.className = `toast ${type} visible`;
+      setTimeout(() => {
+        toast.classList.remove('visible');
+      }, 3000);
+    }
+
+    // Utilities
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      })[c]);
+    }
+
+    function escapeJs(str) {
+      if (!str) return '';
+      return String(str).replace(/[\\'"]/g, '\\$&');
+    }
+
+    // Initialize
+    initApp().catch(error => {
+      console.error('Failed to initialize app:', error);
+      directoryList.innerHTML = `<div class="loading" style="color: var(--error);">Failed to connect: ${error.message}</div>`;
+    });
+  </script>
+</body>
+</html>
