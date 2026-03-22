@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as path from "node:path";
 
 // Must mock modules before importing the module under test
@@ -13,40 +13,36 @@ import { classifyPaths, getStaticMode } from "./index.js";
 import { getStaticModeFromConfig } from "./skill-config.js";
 
 describe("classifyPaths", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
   it("separates local paths and GitHub URLs", () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const result = classifyPaths(["/local/path", "github.com/owner/repo"]);
     expect(result.localDirs).toHaveLength(1);
     expect(result.localDirs[0]).toBe(path.resolve("/local/path"));
     expect(result.githubSpecs).toHaveLength(1);
     expect(result.githubSpecs[0].owner).toBe("owner");
     expect(result.githubSpecs[0].repo).toBe("repo");
-    consoleSpy.mockRestore();
   });
 
   it("deduplicates local paths", () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const result = classifyPaths(["/same/path", "/same/path"]);
     expect(result.localDirs).toHaveLength(1);
-    consoleSpy.mockRestore();
   });
 
   it("deduplicates GitHub specs by owner/repo", () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const result = classifyPaths([
       "github.com/owner/repo",
       "github.com/owner/repo@main",
     ]);
     expect(result.githubSpecs).toHaveLength(1);
-    consoleSpy.mockRestore();
   });
 
   it("logs warning for invalid GitHub URLs", () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const result = classifyPaths(["github.com/only-owner"]);
     expect(result.githubSpecs).toHaveLength(0);
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("Invalid GitHub URL"));
-    consoleSpy.mockRestore();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("Invalid GitHub URL"));
   });
 
 });
