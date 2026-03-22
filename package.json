@@ -50,7 +50,10 @@
     "eval:xlsx-openpyxl": "tsx evals/eval.ts --task=xlsx-openpyxl",
     "eval:xlsx-formulas": "tsx evals/eval.ts --task=xlsx-formulas",
     "eval:xlsx-financial": "tsx evals/eval.ts --task=xlsx-financial",
-    "eval:xlsx-verify": "tsx evals/eval.ts --task=xlsx-verify"
+    "eval:xlsx-verify": "tsx evals/eval.ts --task=xlsx-verify",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "^1.0.0",
@@ -63,10 +66,12 @@
   "devDependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.42",
     "@types/node": "^22.10.0",
+    "@vitest/coverage-v8": "^4.1.0",
     "cross-env": "^7.0.3",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vite": "^6.0.0",
-    "vite-plugin-singlefile": "^2.0.0"
+    "vite-plugin-singlefile": "^2.0.0",
+    "vitest": "^4.1.0"
   }
 }

@@ -156,7 +156,7 @@ let currentSourceMap: DirectorySourceMap = {};
  * no listChanged notifications for tools/prompts.
  * Priority: CLI flag > env var > config file
  */
-function getStaticMode(): boolean {
+export function getStaticMode(): boolean {
   // Check CLI flag (highest priority)
   const args = process.argv.slice(2);
   if (args.includes("--static")) {
@@ -177,7 +177,7 @@ function getStaticMode(): boolean {
  * Classify paths as local directories or GitHub repositories.
  * GitHub URLs are detected by checking for "github.com" in the path.
  */
-function classifyPaths(paths: string[]): {
+export function classifyPaths(paths: string[]): {
   localDirs: string[];
   githubSpecs: GitHubRepoSpec[];
 } {
