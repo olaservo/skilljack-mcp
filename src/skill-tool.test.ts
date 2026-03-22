@@ -64,6 +64,11 @@ describe("isPathWithinBase", () => {
     const target = "/some/other/dir/file.txt";
     expect(isPathWithinBase(target, base)).toBe(false);
   });
+
+  it("returns true when non-existent path equals base via fallback", () => {
+    const dir = "/nonexistent/base/dir";
+    expect(isPathWithinBase(dir, dir)).toBe(true);
+  });
 });
 
 describe("listSkillFiles", () => {

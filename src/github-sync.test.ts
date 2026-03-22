@@ -45,7 +45,11 @@ describe("syncRepo", () => {
 
     expect(result.updated).toBe(true);
     expect(result.error).toBeUndefined();
-    expect(mockGitInstance.clone).toHaveBeenCalled();
+    expect(mockGitInstance.clone).toHaveBeenCalledWith(
+      expect.stringContaining("github.com/test-owner/test-repo"),
+      expect.any(String),
+      expect.arrayContaining(["--depth", "1"])
+    );
   });
 
   it("pulls when repo already exists", async () => {

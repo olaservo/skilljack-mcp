@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as path from "node:path";
 import {
   sanitizePrefix,
@@ -276,12 +276,12 @@ describe("warnLargeSkillCount", () => {
 });
 
 describe("discoverSkills", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
   it("discovers valid skills from a directory", () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const skills = discoverSkills(FIXTURES_DIR);
-    // Should find valid-skill, minimal-skill, lowercase-skill, disabled-model, user-invocable-false, with-metadata, with-resources
-    // Should skip: no-frontmatter, invalid-yaml, missing-name, missing-description, not-a-skill
-    // with-invalid-metadata and with-reserved-metadata will be discovered but metadata skipped
     const names = skills.map((s) => s.baseName);
     expect(names).toContain("test-skill");
     expect(names).toContain("minimal");
@@ -290,56 +290,41 @@ describe("discoverSkills", () => {
     expect(names).toContain("no-prompt");
     expect(names).toContain("meta-skill");
     expect(names).toContain("resourceful");
-    consoleSpy.mockRestore();
   });
 
   it("returns empty array when directory does not exist", () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const skills = discoverSkills("/nonexistent/path");
     expect(skills).toHaveLength(0);
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("not found"));
-    consoleSpy.mockRestore();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("not found"));
   });
 
   it("skips directories without SKILL.md", () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const skills = discoverSkills(FIXTURES_DIR);
     const names = skills.map((s) => s.baseName);
-    // not-a-skill has no SKILL.md
     expect(names).not.toContain("not-a-skill");
-    consoleSpy.mockRestore();
   });
 
   it("handles missing name field gracefully", () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     discoverSkills(FIXTURES_DIR);
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("missing or invalid 'name'"));
-    consoleSpy.mockRestore();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("missing or invalid 'name'"));
   });
 
   it("handles missing description field gracefully", () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     discoverSkills(FIXTURES_DIR);
-    expect(consoleSpy).toHaveBeenCalledWith(
+    expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining("missing or invalid 'description'")
     );
-    consoleSpy.mockRestore();
   });
 
   it("applies source prefix to qualified name", () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const source = createTestSource({ prefix: "my-project" });
     const skills = discoverSkills(FIXTURES_DIR, source);
-    const qualifiedNames = skills.map((s) => s.name);
-    // All qualified names should have the prefix
-    for (const name of qualifiedNames) {
-      expect(name).toMatch(/^my-project__/);
+    for (const skill of skills) {
+      expect(skill.name).toMatch(/^my-project__/);
     }
-    consoleSpy.mockRestore();
   });
 
   it("parses valid metadata keys", () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const skills = discoverSkills(FIXTURES_DIR);
     const metaSkill = skills.find((s) => s.baseName === "meta-skill");
     expect(metaSkill).toBeDefined();
@@ -347,47 +332,37 @@ describe("discoverSkills", () => {
       "com.example/version": "1.0",
       author: "test",
     });
-    consoleSpy.mockRestore();
   });
 
   it("skips invalid metadata keys with warning", () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const skills = discoverSkills(FIXTURES_DIR);
     const badMeta = skills.find((s) => s.baseName === "bad-meta");
     expect(badMeta).toBeDefined();
-    // Both keys should be skipped, so metadata should be undefined
     expect(badMeta!.metadata).toBeUndefined();
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("skipping metadata key"));
-    consoleSpy.mockRestore();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("skipping metadata key"));
   });
 
   it("skips reserved metadata keys with warning", () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const skills = discoverSkills(FIXTURES_DIR);
     const reservedMeta = skills.find((s) => s.baseName === "reserved-meta");
     expect(reservedMeta).toBeDefined();
     expect(reservedMeta!.metadata).toBeUndefined();
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("reserved"));
-    consoleSpy.mockRestore();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("reserved"));
   });
 
   it("sets disableModelInvocation correctly", () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const skills = discoverSkills(FIXTURES_DIR);
     const disabled = skills.find((s) => s.baseName === "disabled-model");
     expect(disabled).toBeDefined();
     expect(disabled!.disableModelInvocation).toBe(true);
     expect(disabled!.effectiveAssistantInvocable).toBe(false);
-    consoleSpy.mockRestore();
   });
 
   it("sets userInvocable correctly", () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const skills = discoverSkills(FIXTURES_DIR);
     const noPrompt = skills.find((s) => s.baseName === "no-prompt");
     expect(noPrompt).toBeDefined();
     expect(noPrompt!.userInvocable).toBe(false);
     expect(noPrompt!.effectiveUserInvocable).toBe(false);
-    consoleSpy.mockRestore();
   });
 });

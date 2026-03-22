@@ -161,9 +161,9 @@ export function isPathWithinBase(targetPath: string, baseDir: string): boolean {
   } catch {
     // If realpathSync fails (e.g., file doesn't exist), fall back to resolve check
     // This is safe because we'll get an error when trying to read anyway
-    const normalizedBase = path.resolve(baseDir) + path.sep;
+    const normalizedBase = path.resolve(baseDir);
     const normalizedPath = path.resolve(targetPath);
-    return normalizedPath.startsWith(normalizedBase);
+    return normalizedPath === normalizedBase || normalizedPath.startsWith(normalizedBase + path.sep);
   }
 }
 

@@ -669,7 +669,14 @@ async function main() {
   console.error("Skilljack ready. I know kung fu.");
 }
 
-main().catch((error) => {
-  console.error("Fatal error:", error);
-  process.exit(1);
-});
+// Only run main() when executed directly (not when imported by tests)
+const isMainModule = process.argv[1] &&
+  (process.argv[1].endsWith("skilljack-mcp") ||
+   process.argv[1] === fileURLToPath(import.meta.url));
+
+if (isMainModule) {
+  main().catch((error) => {
+    console.error("Fatal error:", error);
+    process.exit(1);
+  });
+}

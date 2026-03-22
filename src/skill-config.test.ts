@@ -97,4 +97,10 @@ describe("parseEnvVar", () => {
     const result = parseEnvVar();
     expect(result).toHaveLength(2);
   });
+
+  it("returns empty array when SKILLS_DIR is only whitespace", () => {
+    process.env.SKILLS_DIR = "   ";
+    const result = parseEnvVar();
+    expect(result).toEqual([]);
+  });
 });

@@ -139,6 +139,18 @@ describe("createPollingManager", () => {
     expect(onError).toHaveBeenCalled();
   });
 
+  it("triggers check after interval elapses", async () => {
+    manager = createPollingManager(specs, syncOptions, {
+      intervalMs: 5000,
+      onUpdate,
+    });
+    manager.start();
+
+    expect(vi.mocked(hasRemoteUpdates)).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(vi.mocked(hasRemoteUpdates)).toHaveBeenCalled();
+  });
+
   it("does not start twice", () => {
     manager = createPollingManager(specs, syncOptions, {
       intervalMs: 1000,
