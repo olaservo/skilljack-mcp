@@ -94,7 +94,7 @@ export function registerSkillTool(
 
       try {
         const content = loadSkillContent(skill.path);
-        const result: CallToolResult = {
+        return {
           content: [
             {
               type: "text",
@@ -102,10 +102,6 @@ export function registerSkillTool(
             },
           ],
         };
-        if (skill.metadata) {
-          result._meta = skill.metadata;
-        }
-        return result;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return {
@@ -367,11 +363,7 @@ function registerSkillResourceTool(
           }
         }
 
-        const dirResult: CallToolResult = { content: contents };
-        if (skill.metadata) {
-          dirResult._meta = skill.metadata;
-        }
-        return dirResult;
+        return { content: contents };
       }
 
       // Check file size to prevent memory exhaustion
@@ -405,7 +397,7 @@ function registerSkillResourceTool(
       // Read and return the file content
       try {
         const content = fs.readFileSync(fullPath, "utf-8");
-        const fileResult: CallToolResult = {
+        return {
           content: [
             {
               type: "text",
@@ -413,10 +405,6 @@ function registerSkillResourceTool(
             },
           ],
         };
-        if (skill.metadata) {
-          fileResult._meta = skill.metadata;
-        }
-        return fileResult;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return {

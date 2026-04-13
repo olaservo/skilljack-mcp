@@ -50,7 +50,7 @@ export interface SkillMetadata {
   path: string; // Full path to SKILL.md
   disableModelInvocation?: boolean; // When true, exclude from tool description
   userInvocable?: boolean; // When false, exclude from prompts (default: true)
-  metadata?: Record<string, string>; // From frontmatter "metadata" key (Agent Skills spec), translated to _meta on MCP primitives
+  metadata?: Record<string, string>; // From frontmatter "metadata" key (Agent Skills spec). Validated but not projected to _meta (metadata is accessible in resource content).
   // Computed effective values (after config overrides applied)
   effectiveAssistantInvocable: boolean; // True if model can auto-invoke
   effectiveUserInvocable: boolean; // True if appears in prompts menu
