@@ -100,3 +100,37 @@ describe("skill resources: size field", () => {
     expect(resource!.annotations?.audience).toEqual(["assistant"]);
   });
 });
+
+describe("skill resources: priority differentiation", () => {
+  it("sets priority 0.8 on primary skill resources", async () => {
+    const skillPath = path.join(FIXTURES_DIR, "valid-skill", "SKILL.md");
+
+    const client = await createConnectedClient([
+      createTestSkill({ name: "test", path: skillPath }),
+    ]);
+
+    const result = await client.listResources();
+    const resource = result.resources.find(
+      (r) => r.uri === "skill://test"
+    );
+
+    expect(resource).toBeDefined();
+    expect(resource!.annotations?.priority).toBe(0.8);
+  });
+
+  it("sets priority 0.3 on directory collection resources", async () => {
+    const skillPath = path.join(FIXTURES_DIR, "valid-skill", "SKILL.md");
+
+    const client = await createConnectedClient([
+      createTestSkill({ name: "test", path: skillPath }),
+    ]);
+
+    const result = await client.listResources();
+    const resource = result.resources.find(
+      (r) => r.uri === "skill://test/"
+    );
+
+    expect(resource).toBeDefined();
+    expect(resource!.annotations?.priority).toBe(0.3);
+  });
+});
