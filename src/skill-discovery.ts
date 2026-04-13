@@ -50,7 +50,6 @@ export interface SkillMetadata {
   path: string; // Full path to SKILL.md
   disableModelInvocation?: boolean; // When true, exclude from tool description
   userInvocable?: boolean; // When false, exclude from prompts (default: true)
-  metadata?: Record<string, string>; // From frontmatter "metadata" key (Agent Skills spec). Validated but not projected to _meta (metadata is accessible in resource content).
   // Computed effective values (after config overrides applied)
   effectiveAssistantInvocable: boolean; // True if model can auto-invoke
   effectiveUserInvocable: boolean; // True if appears in prompts menu
@@ -111,67 +110,6 @@ export function sanitizePrefix(raw: string): string {
 }
 
 /**
- * Regex patterns for MCP _meta key validation.
- * See: https://modelcontextprotocol.io/specification/2025-11-25/basic/index#_meta
- */
-const LABEL_PATTERN = /^[a-zA-Z](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?$/;
-const NAME_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9._-]*[a-zA-Z0-9])?$/;
-
-/**
- * Validate a metadata key against MCP spec _meta key naming rules.
- *
- * Valid keys have two segments: an optional prefix and a name.
- * - Prefix: labels separated by dots, followed by `/`. Labels start with a letter,
- *   end with letter/digit, interior can be letters/digits/hyphens.
- *   Implementations SHOULD use reverse DNS notation (e.g., `com.example/`).
- * - Name: starts/ends with alphanumeric, interior can be alphanumerics/hyphens/underscores/dots.
- *   May be empty if prefix is present.
- * - Reserved: prefixes where the second label is `modelcontextprotocol` or `mcp`
- *   (e.g., `io.modelcontextprotocol/`, `dev.mcp/`). Note: `com.example.mcp/` is NOT reserved.
- */
-export function validateMetaKey(key: string): { valid: boolean; reserved?: boolean; reason?: string } {
-  if (!key) {
-    return { valid: false, reason: "key is empty" };
-  }
-
-  const slashIndex = key.indexOf("/");
-  let name: string;
-
-  if (slashIndex !== -1) {
-    const prefix = key.substring(0, slashIndex);
-    name = key.substring(slashIndex + 1);
-
-    // Validate prefix labels
-    const labels = prefix.split(".");
-    for (const label of labels) {
-      if (!label || !LABEL_PATTERN.test(label)) {
-        return { valid: false, reason: `invalid prefix label "${label}"` };
-      }
-    }
-
-    // Check reserved prefixes: second label is "modelcontextprotocol" or "mcp" (per 2025-11-25 spec)
-    if (labels.length >= 2) {
-      const secondLabel = labels[1].toLowerCase();
-      if (secondLabel === "modelcontextprotocol" || secondLabel === "mcp") {
-        return { valid: true, reserved: true, reason: `prefix "${prefix}/" is reserved for MCP protocol use` };
-      }
-    }
-  } else {
-    name = key;
-  }
-
-  // Validate name (empty name is valid per spec when prefix is present)
-  if (name && !NAME_PATTERN.test(name)) {
-    return {
-      valid: false,
-      reason: `must start/end with alphanumeric, contain only alphanumerics/hyphens/underscores/dots`,
-    };
-  }
-
-  return { valid: true };
-}
-
-/**
  * Compute the qualified name for a skill by combining prefix and base name.
  * If prefix is empty, returns the base name unchanged.
  */
@@ -214,8 +152,6 @@ export function discoverSkills(skillsDir: string, source?: SkillSource): SkillMe
       const description = metadata.description;
       const disableModelInvocation = metadata["disable-model-invocation"];
       const userInvocable = metadata["user-invocable"];
-      const rawMetadata = metadata["metadata"];
-
       if (typeof name !== "string" || !name.trim()) {
         console.error(`Skill at ${skillDir}: missing or invalid 'name' field`);
         continue;
@@ -223,38 +159,6 @@ export function discoverSkills(skillsDir: string, source?: SkillSource): SkillMe
       if (typeof description !== "string" || !description.trim()) {
         console.error(`Skill at ${skillDir}: missing or invalid 'description' field`);
         continue;
-      }
-
-      // Validate metadata: must be a plain object if provided (Agent Skills spec: string keys to string values)
-      // Keys are validated against MCP _meta naming rules; invalid/reserved keys are warned and skipped.
-      let skillMetadata: Record<string, string> | undefined;
-      if (rawMetadata !== undefined && rawMetadata !== null) {
-        if (typeof rawMetadata === "object" && !Array.isArray(rawMetadata)) {
-          const validEntries: [string, string][] = [];
-          for (const [k, v] of Object.entries(rawMetadata as Record<string, unknown>)) {
-            const keyStr = String(k);
-            const validation = validateMetaKey(keyStr);
-            if (!validation.valid) {
-              console.error(`Skill at ${skillDir}: skipping metadata key "${keyStr}": ${validation.reason}`);
-              continue;
-            }
-            if (validation.reserved) {
-              console.error(
-                `Warning: Skill at ${skillDir}: skipping metadata key "${keyStr}": ${validation.reason}`
-              );
-              continue;
-            }
-            // Coerce values to strings per Agent Skills spec
-            validEntries.push([keyStr, String(v)]);
-          }
-          if (validEntries.length > 0) {
-            skillMetadata = Object.fromEntries(validEntries);
-          }
-        } else {
-          console.error(
-            `Skill at ${skillDir}: 'metadata' must be a YAML mapping (key-value pairs), got ${Array.isArray(rawMetadata) ? "array" : typeof rawMetadata}`
-          );
-        }
       }
 
       const effectiveAssistant = disableModelInvocation !== true;
@@ -269,7 +173,6 @@ export function discoverSkills(skillsDir: string, source?: SkillSource): SkillMe
         path: skillMdPath,
         disableModelInvocation: disableModelInvocation === true,
         userInvocable: userInvocable !== false, // Default to true
-        metadata: skillMetadata,
         // Initialize effective values from frontmatter (overrides applied later)
         effectiveAssistantInvocable: effectiveAssistant,
         effectiveUserInvocable: effectiveUser,

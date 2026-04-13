@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as path from "node:path";
 import {
   sanitizePrefix,
-  validateMetaKey,
   createSkillMap,
   applyInvocationOverrides,
   getModelInvocableSkills,
@@ -49,79 +48,6 @@ describe("sanitizePrefix", () => {
 
   it("replaces each whitespace run with a hyphen", () => {
     expect(sanitizePrefix("my   project")).toBe("my-project");
-  });
-});
-
-describe("validateMetaKey", () => {
-  it("accepts valid simple name", () => {
-    expect(validateMetaKey("version")).toEqual({ valid: true });
-  });
-
-  it("accepts valid name with dots and hyphens", () => {
-    expect(validateMetaKey("my-key.v1")).toEqual({ valid: true });
-  });
-
-  it("accepts valid prefixed key", () => {
-    const result = validateMetaKey("com.example/version");
-    expect(result.valid).toBe(true);
-    expect(result.reserved).toBeUndefined();
-  });
-
-  it("accepts prefix with empty name", () => {
-    const result = validateMetaKey("com.example/");
-    expect(result.valid).toBe(true);
-  });
-
-  it("rejects empty key", () => {
-    expect(validateMetaKey("")).toEqual({ valid: false, reason: "key is empty" });
-  });
-
-  it("rejects name starting with hyphen", () => {
-    const result = validateMetaKey("-bad");
-    expect(result.valid).toBe(false);
-  });
-
-  it("rejects name ending with hyphen", () => {
-    const result = validateMetaKey("bad-");
-    expect(result.valid).toBe(false);
-  });
-
-  it("rejects name with special characters", () => {
-    const result = validateMetaKey("bad key!");
-    expect(result.valid).toBe(false);
-  });
-
-  it("rejects invalid prefix label starting with digit", () => {
-    const result = validateMetaKey("1com.example/key");
-    expect(result.valid).toBe(false);
-  });
-
-  it("rejects invalid prefix label ending with hyphen", () => {
-    const result = validateMetaKey("com-.example/key");
-    expect(result.valid).toBe(false);
-  });
-
-  it("flags reserved prefix with modelcontextprotocol", () => {
-    const result = validateMetaKey("io.modelcontextprotocol/key");
-    expect(result.valid).toBe(true);
-    expect(result.reserved).toBe(true);
-  });
-
-  it("flags reserved prefix with mcp", () => {
-    const result = validateMetaKey("dev.mcp/key");
-    expect(result.valid).toBe(true);
-    expect(result.reserved).toBe(true);
-  });
-
-  it("does not flag mcp in third position as reserved", () => {
-    const result = validateMetaKey("com.example.mcp/key");
-    expect(result.valid).toBe(true);
-    expect(result.reserved).toBeUndefined();
-  });
-
-  it("rejects empty prefix label", () => {
-    const result = validateMetaKey(".example/key");
-    expect(result.valid).toBe(false);
   });
 });
 
@@ -289,7 +215,6 @@ describe("discoverSkills", () => {
     expect(names).toContain("lowercase");
     expect(names).toContain("disabled-model");
     expect(names).toContain("no-prompt");
-    expect(names).toContain("meta-skill");
     expect(names).toContain("resourceful");
   });
 
@@ -323,32 +248,6 @@ describe("discoverSkills", () => {
     for (const skill of skills) {
       expect(skill.name).toMatch(/^my-project__/);
     }
-  });
-
-  it("parses valid metadata keys", () => {
-    const skills = discoverSkills(FIXTURES_DIR);
-    const metaSkill = skills.find((s) => s.baseName === "meta-skill");
-    expect(metaSkill).toBeDefined();
-    expect(metaSkill!.metadata).toEqual({
-      "com.example/version": "1.0",
-      author: "test",
-    });
-  });
-
-  it("skips invalid metadata keys with warning", () => {
-    const skills = discoverSkills(FIXTURES_DIR);
-    const badMeta = skills.find((s) => s.baseName === "bad-meta");
-    expect(badMeta).toBeDefined();
-    expect(badMeta!.metadata).toBeUndefined();
-    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("skipping metadata key"));
-  });
-
-  it("skips reserved metadata keys with warning", () => {
-    const skills = discoverSkills(FIXTURES_DIR);
-    const reservedMeta = skills.find((s) => s.baseName === "reserved-meta");
-    expect(reservedMeta).toBeDefined();
-    expect(reservedMeta!.metadata).toBeUndefined();
-    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("reserved"));
   });
 
   it("sets disableModelInvocation correctly", () => {
