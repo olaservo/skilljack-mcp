@@ -366,7 +366,6 @@ Control which skills appear in tools vs prompts using optional frontmatter field
 | (default) | Yes | Yes | Normal skills |
 | `disable-model-invocation: true` | No | Yes | User-triggered workflows (deploy, commit) |
 | `user-invocable: false` | Yes | No | Background context (model auto-loads when relevant) |
-| `metadata: { key: value }` | — | — | Arbitrary key-value pairs passed as `_meta` on MCP primitives |
 
 ### Example: User-Only Skill
 
@@ -391,22 +390,6 @@ description: Background information about this codebase
 user-invocable: false
 ---
 ```
-
-### Skill Metadata
-
-The optional `metadata` frontmatter field allows attaching arbitrary key-value pairs to a skill, following the [Agent Skills spec](https://agentskills.io/specification). Values are coerced to strings. The metadata is translated to `_meta` on MCP resources and tool results.
-
-```yaml
----
-name: my-skill
-description: A helpful skill
-metadata:
-  author: example-org
-  version: "1.0"
----
-```
-
-When this skill's resources are listed or its content is loaded via the `skill` or `skill-resource` tools, the response includes `_meta: { author: "example-org", version: "1.0" }`.
 
 Note: Resources (`skill://` URIs) always include all skills regardless of visibility settings, allowing explicit access when needed.
 
