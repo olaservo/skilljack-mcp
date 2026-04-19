@@ -53,9 +53,9 @@ src/
 1. **Startup discovery**: Skills discovered from configured directories at startup (supports multiple)
 2. **File watching**: chokidar watches skill directories for SKILL.md changes
 3. **Dynamic refresh**: On file change → re-discover → update tool/prompts → send notifications
-4. **Tool description**: Skill metadata embedded in `skill` tool description, refreshable via `tools/listChanged`
+4. **Tool description**: Skill metadata embedded in `load-skill` tool description, refreshable via `tools/listChanged`
 5. **Prompts**: `/skill` prompt with auto-completion + per-skill prompts, refreshable via `prompts/listChanged`
-6. **Progressive disclosure**: Full SKILL.md loaded on demand via `skill` tool or prompts
+6. **Progressive disclosure**: Full SKILL.md loaded on demand via `load-skill` tool or prompts
 7. **MCP SDK patterns**: Uses `McpServer`, `ResourceTemplate`, `completable()`, Zod schemas
 
 ## Key Functions

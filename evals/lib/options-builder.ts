@@ -102,6 +102,31 @@ export async function buildOptions(config: BuildOptionsConfig): Promise<any> {
   // Default to Sonnet 4.6
   const modelId = model || "claude-sonnet-4-6";
 
+  // Skill context is NOT injected into the client systemPrompt — it already
+  // arrives via the skilljack MCP server's tool descriptions (getToolDescription
+  // in src/skill-tool.ts) or Claude Code's local Skill tool description. Adding
+  // it here would be duplicative and leak <location> paths that tempt the model
+  // to Read the file directly instead of going through the skill tool.
+  //
+  // We still need a non-empty systemPrompt to override the SDK's implicit
+  // `claude_code` preset default, which has a 0.2.x regression that suppresses
+  // skill tool activation. A minimal string is enough.
+  //
+  // What we'd prefer (but can't use — 0.2.x `claude_code` preset regression):
+  //   systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt ?? '' }
+  // The preset + append form is the SDK's only native append mechanism, and
+  // it would preserve Claude Code's built-in tool/file-handling guidance. But
+  // on SDK 0.2.x (reproduced on 0.2.114 with the implicit-activation `code-style`
+  // task), the preset's baked-in guidance outweighs any appended content and
+  // the model never calls the skill tool. Revisit if the SDK fixes the
+  // regression or adds an append-without-preset option.
+  // See: C:\Users\johnn\OneDrive\Documents\everything\_mcp\__skills\agent-sdk-0.2.x-regression.md
+  const MINIMAL_SYSTEM_PROMPT =
+    "You are a helpful assistant. Use the tools available to you to complete the user's request.";
+  const effectiveSystemPrompt = systemPrompt
+    ? `${MINIMAL_SYSTEM_PROMPT}\n\n${systemPrompt}`
+    : MINIMAL_SYSTEM_PROMPT;
+
   let options: Record<string, unknown>;
 
   if (mode === "cli-local") {
@@ -116,17 +141,15 @@ export async function buildOptions(config: BuildOptionsConfig): Promise<any> {
     };
   } else if (mode === "local") {
     // Local mode: use settingSources and Skill tool
-    // Must use claude_code preset to get skill awareness in system prompt
+    // Note: the claude_code preset was dropped — in SDK 0.2.x the preset's
+    // baked-in guidance competes with skill activation. Plain systemPrompt
+    // (or none) keeps the Skill tool description's activation triggers intact.
     await setupLocalSkills(skillsDir);
     await ensureSettingsJson();
 
     options = {
       cwd: process.cwd(),
-      // Use Claude Code's system prompt which includes skill awareness
-      // Without this preset, the SDK uses a minimal prompt without skill instructions
-      systemPrompt: systemPrompt
-        ? { type: 'preset' as const, preset: 'claude_code' as const, append: systemPrompt }
-        : { type: 'preset' as const, preset: 'claude_code' as const },
+      systemPrompt: effectiveSystemPrompt,
       settingSources: ['project' as const],
       allowedTools: ["Bash", "Read", "Write", "Skill"],
       permissionMode: "default" as const,
@@ -156,10 +179,7 @@ export async function buildOptions(config: BuildOptionsConfig): Promise<any> {
           args: [serverPath, absoluteSkillsDir]
         }
       },
-      // Use Claude Code's system prompt for skill awareness
-      systemPrompt: systemPrompt
-        ? { type: 'preset' as const, preset: 'claude_code' as const, append: systemPrompt }
-        : { type: 'preset' as const, preset: 'claude_code' as const },
+      systemPrompt: effectiveSystemPrompt,
       settingSources: ['project' as const],
       // Allow both MCP and local skill tools
       allowedTools: ["Bash", "Read", "Write", "Skill", "mcp__skilljack"],
@@ -186,16 +206,11 @@ export async function buildOptions(config: BuildOptionsConfig): Promise<any> {
           args: [serverPath, absoluteSkillsDir]
         }
       },
+      systemPrompt: effectiveSystemPrompt,
       allowedTools: ["mcp__skilljack"],
       permissionMode: "default" as const,
       model: modelId
     };
-  }
-
-  // For MCP mode, optionally include custom systemPrompt
-  // (local mode already handles systemPrompt with the claude_code preset above)
-  if (mode === "mcp" && systemPrompt) {
-    options.systemPrompt = systemPrompt;
   }
 
   return options;

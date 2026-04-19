@@ -26,7 +26,7 @@ import chokidar from "chokidar";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { discoverSkills, createSkillMap, applyInvocationOverrides, SkillSource, DEFAULT_SKILL_SOURCE, BUNDLED_SKILL_SOURCE, warnLargeSkillCount } from "./skill-discovery.js";
+import { discoverSkills, createSkillMap, applyInvocationOverrides, SkillSource, DEFAULT_SKILL_SOURCE, BUNDLED_SKILL_SOURCE, warnLargeSkillCount, generateInstructions, getModelInvocableSkills } from "./skill-discovery.js";
 import { registerSkillTool, getToolDescription, SkillState } from "./skill-tool.js";
 import { registerSkillResources } from "./skill-resources.js";
 import { registerSkillPrompts, refreshPrompts, PromptRegistry } from "./skill-prompts.js";
@@ -557,6 +557,15 @@ async function main() {
   // Create the MCP server
   // In static mode, disable listChanged for tools/prompts (skills list is frozen)
   // Resource subscriptions remain dynamic for individual skill file watching
+  //
+  // Server instructions: XML catalog of model-invocable skills. Some clients
+  // (e.g. Claude Agent SDK 0.2.x without the claude_code preset) route skill
+  // awareness via server instructions rather than the skill tool's description,
+  // so we provide both. Instructions are set once at construction; dynamic skill
+  // changes are still delivered via the load-skill tool's description + tools/listChanged.
+  const initialSkills = Array.from(skillState.skillMap.values());
+  const initialInstructions = generateInstructions(getModelInvocableSkills(initialSkills));
+
   const server = new McpServer(
     {
       name: "skilljack-mcp",
@@ -572,6 +581,7 @@ async function main() {
           "io.modelcontextprotocol/skills": {},
         },
       },
+      instructions: initialInstructions,
     }
   );
 

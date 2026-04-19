@@ -31,7 +31,12 @@ const SkillSchema = z.object({
 });
 
 /**
- * Register the "skill" tool with the MCP server.
+ * Register the "load-skill" tool with the MCP server.
+ *
+ * Named `load-skill` (not `skill`) to avoid colliding with Claude Code's built-in
+ * `Skill` tool. When both are present, the model defaults to the built-in one even
+ * if our catalog is the relevant source; a distinct verb-first name removes that
+ * routing ambiguity.
  *
  * The tool description includes the full skill discovery instructions (same format as
  * server instructions) to enable dynamic updates via tools/listChanged notifications.
@@ -63,9 +68,9 @@ export function registerSkillTool(
   skillState: SkillState
 ): RegisteredTool {
   const skillTool = server.registerTool(
-    "skill",
+    "load-skill",
     {
-      title: "Activate Skill",
+      title: "Load Skill",
       description: getToolDescription(skillState),
       inputSchema: SkillSchema,
       annotations: {
