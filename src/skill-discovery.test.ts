@@ -10,6 +10,11 @@ import {
   warnLargeSkillCount,
   discoverSkills,
   getResourceAnnotations,
+  getSkillPath,
+  buildSkillResourceUri,
+  parseSkillResourceUri,
+  buildSkillIndex,
+  BUNDLED_SKILL_SOURCE,
   SKILL_COUNT_WARNING_THRESHOLD,
 } from "./skill-discovery.js";
 import { createTestSkill, createTestSource } from "./__test-helpers__/helpers.js";
@@ -361,5 +366,199 @@ describe("getResourceAnnotations", () => {
     const { annotations, size } = getResourceAnnotations(skill);
     expect(annotations.lastModified).toBeUndefined();
     expect(size).toBeUndefined();
+  });
+});
+
+describe("getSkillPath (SEP-2640)", () => {
+  it("returns baseName alone for bundled skills (empty prefix)", () => {
+    const skill = createTestSkill({
+      baseName: "git-workflow",
+      source: BUNDLED_SKILL_SOURCE,
+    });
+    expect(getSkillPath(skill)).toBe("git-workflow");
+  });
+
+  it("returns prefix/baseName for prefixed skills", () => {
+    const skill = createTestSkill({
+      baseName: "commit",
+      source: createTestSource({ prefix: "my-project" }),
+    });
+    expect(getSkillPath(skill)).toBe("my-project/commit");
+  });
+
+  it("sanitizes the prefix", () => {
+    const skill = createTestSkill({
+      baseName: "deploy",
+      source: createTestSource({ prefix: "Hello World!" }),
+    });
+    expect(getSkillPath(skill)).toBe("Hello-World/deploy");
+  });
+
+  it("falls back to baseName when sanitized prefix is empty", () => {
+    const skill = createTestSkill({
+      baseName: "lone",
+      source: createTestSource({ prefix: "@#$" }),
+    });
+    expect(getSkillPath(skill)).toBe("lone");
+  });
+});
+
+describe("buildSkillResourceUri (SEP-2640)", () => {
+  it("builds skill://baseName/SKILL.md for bundled skills", () => {
+    const skill = createTestSkill({
+      baseName: "git-workflow",
+      source: BUNDLED_SKILL_SOURCE,
+    });
+    expect(buildSkillResourceUri(skill, "SKILL.md")).toBe(
+      "skill://git-workflow/SKILL.md"
+    );
+  });
+
+  it("builds skill://prefix/baseName/SKILL.md for prefixed skills", () => {
+    const skill = createTestSkill({
+      baseName: "refunds",
+      source: createTestSource({ prefix: "acme-billing" }),
+    });
+    expect(buildSkillResourceUri(skill, "SKILL.md")).toBe(
+      "skill://acme-billing/refunds/SKILL.md"
+    );
+  });
+
+  it("preserves slashes between file path segments while encoding each segment", () => {
+    const skill = createTestSkill({
+      baseName: "pdf-processing",
+      source: BUNDLED_SKILL_SOURCE,
+    });
+    expect(buildSkillResourceUri(skill, "scripts/extract.py")).toBe(
+      "skill://pdf-processing/scripts/extract.py"
+    );
+  });
+
+  it("percent-encodes spaces and special chars within a file segment", () => {
+    const skill = createTestSkill({
+      baseName: "docs",
+      source: BUNDLED_SKILL_SOURCE,
+    });
+    expect(buildSkillResourceUri(skill, "templates/email subject.md")).toBe(
+      "skill://docs/templates/email%20subject.md"
+    );
+  });
+});
+
+describe("parseSkillResourceUri (SEP-2640)", () => {
+  const bundled = createTestSkill({
+    baseName: "my-skill",
+    name: "my-skill",
+    path: "/skills/my-skill/SKILL.md",
+    source: BUNDLED_SKILL_SOURCE,
+  });
+  const prefixed = createTestSkill({
+    baseName: "refunds",
+    name: "acme-billing__refunds",
+    path: "/skills/refunds/SKILL.md",
+    source: createTestSource({ prefix: "acme-billing" }),
+  });
+  const map = new Map([
+    [bundled.name, bundled],
+    [prefixed.name, prefixed],
+  ]);
+
+  it("resolves bundled SKILL.md URI", () => {
+    const result = parseSkillResourceUri("skill://my-skill/SKILL.md", map);
+    expect(result?.skill).toBe(bundled);
+    expect(result?.fileRelPath).toBe("SKILL.md");
+  });
+
+  it("resolves prefixed SKILL.md URI", () => {
+    const result = parseSkillResourceUri(
+      "skill://acme-billing/refunds/SKILL.md",
+      map
+    );
+    expect(result?.skill).toBe(prefixed);
+    expect(result?.fileRelPath).toBe("SKILL.md");
+  });
+
+  it("resolves a nested supporting-file URI", () => {
+    const result = parseSkillResourceUri(
+      "skill://acme-billing/refunds/templates/email.md",
+      map
+    );
+    expect(result?.skill).toBe(prefixed);
+    expect(result?.fileRelPath).toBe("templates/email.md");
+  });
+
+  it("returns null for non-skill scheme", () => {
+    expect(parseSkillResourceUri("http://example.com/x", map)).toBeNull();
+  });
+
+  it("returns null when no skill matches", () => {
+    expect(parseSkillResourceUri("skill://nope/SKILL.md", map)).toBeNull();
+  });
+
+  it("returns null for a legacy bare skill://name URI (no file)", () => {
+    expect(parseSkillResourceUri("skill://my-skill", map)).toBeNull();
+  });
+
+  it("returns null for a legacy skill://name/ URI (empty file segment)", () => {
+    expect(parseSkillResourceUri("skill://my-skill/", map)).toBeNull();
+  });
+});
+
+describe("buildSkillIndex (SEP-2640)", () => {
+  it("emits the SEP $schema URL", () => {
+    const map = new Map([
+      ["a", createTestSkill({ name: "a", baseName: "a", source: BUNDLED_SKILL_SOURCE })],
+    ]);
+    expect(buildSkillIndex(map).$schema).toBe(
+      "https://schemas.agentskills.io/discovery/0.2.0/schema.json"
+    );
+  });
+
+  it("emits one entry per skill with type skill-md and the SKILL.md URL", () => {
+    const a = createTestSkill({
+      name: "a",
+      baseName: "a",
+      description: "skill A",
+      source: BUNDLED_SKILL_SOURCE,
+    });
+    const b = createTestSkill({
+      name: "p__b",
+      baseName: "b",
+      description: "skill B",
+      source: createTestSource({ prefix: "p" }),
+    });
+    const index = buildSkillIndex(
+      new Map([
+        [a.name, a],
+        [b.name, b],
+      ])
+    );
+    expect(index.skills).toHaveLength(2);
+    expect(index.skills).toEqual(
+      expect.arrayContaining([
+        {
+          name: "a",
+          type: "skill-md",
+          description: "skill A",
+          url: "skill://a/SKILL.md",
+        },
+        {
+          name: "b",
+          type: "skill-md",
+          description: "skill B",
+          url: "skill://p/b/SKILL.md",
+        },
+      ])
+    );
+  });
+
+  it("uses baseName, not the qualified name, for the index name field", () => {
+    const skill = createTestSkill({
+      name: "my-project__commit",
+      baseName: "commit",
+      source: createTestSource({ prefix: "my-project" }),
+    });
+    const index = buildSkillIndex(new Map([[skill.name, skill]]));
+    expect(index.skills[0].name).toBe("commit");
   });
 });

@@ -120,6 +120,87 @@ function qualifyName(prefix: string, baseName: string): string {
 }
 
 /**
+ * Compute the SEP-2640 <skill-path> for a skill.
+ *
+ * Bundled (empty prefix) → baseName
+ * Other → "<sanitizePrefix(prefix)>/<baseName>"
+ *
+ * The final segment always equals the frontmatter `name`, per SEP.
+ */
+export function getSkillPath(skill: SkillMetadata): string {
+  const prefix = sanitizePrefix(skill.source.prefix);
+  return prefix ? `${prefix}/${skill.baseName}` : skill.baseName;
+}
+
+/**
+ * Build a full skill resource URI for a file relative to the skill root.
+ * Per-segment encoding preserves slashes between path segments.
+ */
+export function buildSkillResourceUri(skill: SkillMetadata, fileRelPath: string): string {
+  const skillPath = getSkillPath(skill);
+  const encodedFile = fileRelPath.split("/").map(encodeURIComponent).join("/");
+  return `skill://${skillPath}/${encodedFile}`;
+}
+
+/**
+ * Parse a skill:// URI into a (skill, fileRelPath) pair.
+ *
+ * Walks skillMap to disambiguate <skill-path> from <file-path>, since the URI
+ * itself does not encode where the skill segment ends. Longest-path-first
+ * matching handles overlapping prefixes (e.g., foo/bar vs foo/bar/baz).
+ *
+ * Returns null if the URI is not a skill:// URI or no skill matches.
+ */
+export function parseSkillResourceUri(
+  uri: string,
+  skillMap: Map<string, SkillMetadata>
+): { skill: SkillMetadata; fileRelPath: string } | null {
+  const m = uri.match(/^skill:\/\/(.+)$/);
+  if (!m) return null;
+  // Decode per-segment so segments containing literal %2F round-trip cleanly.
+  const remainder = m[1].split("/").map(decodeURIComponent).join("/");
+  const candidates = Array.from(skillMap.values())
+    .map((s) => ({ s, p: getSkillPath(s) }))
+    .sort((a, b) => b.p.length - a.p.length);
+  for (const { s, p } of candidates) {
+    if (remainder.startsWith(p + "/")) {
+      const fileRelPath = remainder.slice(p.length + 1);
+      // Reject URIs with no file segment (e.g., legacy "skill://name/").
+      // SEP-2640 requires SKILL.md to be explicit in the URI.
+      if (fileRelPath === "") return null;
+      return { skill: s, fileRelPath };
+    }
+  }
+  return null;
+}
+
+/**
+ * Build the SEP-2640 discovery index document.
+ *
+ * All skills are emitted as type "skill-md" with a URL pointing to their
+ * SKILL.md resource. Archive and resource-template entry types are out of
+ * scope for this server.
+ */
+export function buildSkillIndex(skillMap: Map<string, SkillMetadata>): {
+  $schema: string;
+  skills: Array<{ name: string; type: "skill-md"; description: string; url: string }>;
+} {
+  const skills: Array<{ name: string; type: "skill-md"; description: string; url: string }> = [];
+  for (const skill of skillMap.values()) {
+    skills.push({
+      name: skill.baseName,
+      type: "skill-md",
+      description: skill.description,
+      url: buildSkillResourceUri(skill, "SKILL.md"),
+    });
+  }
+  return {
+    $schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+    skills,
+  };
+}
+
+/**
  * Discover all skills in a directory.
  * Scans for subdirectories containing SKILL.md files.
  *

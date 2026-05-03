@@ -340,6 +340,15 @@ function refreshSkills(
 
   // Also notify that resources have changed
   server.sendResourceListChanged();
+
+  // The SEP-2640 index resource always changes when the skill list changes,
+  // even when no individual SKILL.md was modified (e.g., a skill was added
+  // or removed). Emit an explicit update notification so subscribed clients
+  // refetch.
+  server.server.notification({
+    method: "notifications/resources/updated",
+    params: { uri: "skill://index.json" },
+  });
 }
 
 /**
@@ -558,6 +567,10 @@ async function main() {
         tools: { listChanged: !isStatic },
         resources: { subscribe: true, listChanged: true },
         prompts: { listChanged: !isStatic },
+        // SEP-2640 (Skills Extension): https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640
+        extensions: {
+          "io.modelcontextprotocol/skills": {},
+        },
       },
     }
   );

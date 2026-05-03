@@ -15,7 +15,7 @@ An MCP server that jacks [Agent Skills](https://agentskills.io) directly into yo
 - **Tool List Changed Notifications** - Sends `tools/listChanged` so clients can refresh available skills
 - **Skill Tool** - Load full skill content on demand (progressive disclosure)
 - **MCP Prompts** - Load skills via `/skill` prompt with auto-completion or per-skill prompts
-- **MCP Resources** - Access skills via `skill://` URIs with batch collection support
+- **MCP Resources** - Access skills via `skill://` URIs aligned with [SEP-2640](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640)
 - **Resource Subscriptions** - Real-time file watching with `notifications/resources/updated`
 - **Configuration UI** - Manage skill directories through an interactive UI in supported clients
 
@@ -264,16 +264,17 @@ Prompts return embedded resources with the skill's `skill://` URI, allowing clie
 
 ## Resources
 
-Skills are also accessible via MCP [Resources](https://modelcontextprotocol.io/specification/2025-11-25/server/resources#resources) using `skill://` URIs.
+Skills are also accessible via MCP [Resources](https://modelcontextprotocol.io/specification/2025-11-25/server/resources#resources) using `skill://` URIs, following the [SEP-2640 Skills Extension](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640) convention. The server advertises support via the `extensions["io.modelcontextprotocol/skills"]` capability key in its `initialize` response.
 
 ### URI Patterns
 
 | URI | Returns |
 |-----|---------|
-| `skill://{name}` | Single skill's SKILL.md content |
-| `skill://{name}/` | All files in skill directory (collection) |
+| `skill://<skill-path>/SKILL.md` | The skill's `SKILL.md` (`text/markdown`). Listed in `resources/list`. |
+| `skill://<skill-path>/<file-path>` | A supporting file inside the skill directory. Template-resolvable; not listed. |
+| `skill://index.json` | SEP-2640 discovery index (`application/json`). Listed in `resources/list`. |
 
-Individual file URIs (`skill://{name}/{path}`) are not listed as resources to reduce noise. Use the `skill-resource` tool to fetch specific files on demand.
+`<skill-path>` is `<prefix>/<baseName>` for prefixed skills (the prefix segments come from the skill's source — e.g., a local directory basename or `owner-repo` for GitHub-sourced skills) or just `<baseName>` for bundled skills. The final `<skill-path>` segment always matches the `name` field in the skill's frontmatter, per SEP.
 
 ### Resource Subscriptions
 
@@ -283,20 +284,22 @@ Clients can subscribe to resources for real-time updates when files change.
 
 **Subscribe to a resource:**
 ```
-→ resources/subscribe { uri: "skill://mcp-server-ts" }
+→ resources/subscribe { uri: "skill://skilljack-docs/SKILL.md" }
 ← {} (success)
 ```
 
 **Receive notifications when files change:**
 ```
-← notifications/resources/updated { uri: "skill://mcp-server-ts" }
+← notifications/resources/updated { uri: "skill://skilljack-docs/SKILL.md" }
 ```
 
 **Unsubscribe:**
 ```
-→ resources/unsubscribe { uri: "skill://mcp-server-ts" }
+→ resources/unsubscribe { uri: "skill://skilljack-docs/SKILL.md" }
 ← {} (success)
 ```
+
+Subscribing to `skill://index.json` watches every SKILL.md, so any skill change re-fires that subscription as well as `notifications/resources/updated` for `skill://index.json` directly when skills are added or removed.
 
 **How it works:**
 1. Client subscribes to a `skill://` URI

@@ -5,14 +5,15 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { registerSkillResources } from "./skill-resources.js";
-import { createTestSkill, createTestSkillState } from "./__test-helpers__/helpers.js";
+import { BUNDLED_SKILL_SOURCE } from "./skill-discovery.js";
+import {
+  createTestSkill,
+  createTestSkillState,
+  createTestSource,
+} from "./__test-helpers__/helpers.js";
 
 const FIXTURES_DIR = path.resolve(__dirname, "__fixtures__", "skills");
 
-/**
- * Helper: wire up a McpServer + Client over InMemoryTransport,
- * register skill resources, and return the connected client.
- */
 async function createConnectedClient(
   skills: ReturnType<typeof createTestSkill>[]
 ) {
@@ -29,62 +30,82 @@ async function createConnectedClient(
   return client;
 }
 
-describe("skill resources: size field", () => {
-  it("includes size on skill template resources for real files", async () => {
+describe("SKILL.md resource (SEP-2640)", () => {
+  it("lists one SKILL.md resource per skill at the SEP URI shape", async () => {
     const skillPath = path.join(FIXTURES_DIR, "valid-skill", "SKILL.md");
     const expectedSize = fs.statSync(skillPath).size;
 
     const client = await createConnectedClient([
-      createTestSkill({ name: "valid", path: skillPath }),
+      createTestSkill({
+        name: "test-skill",
+        baseName: "test-skill",
+        path: skillPath,
+        source: BUNDLED_SKILL_SOURCE,
+      }),
     ]);
 
     const result = await client.listResources();
     const skillResource = result.resources.find(
-      (r) => r.uri === "skill://valid"
+      (r) => r.uri === "skill://test-skill/SKILL.md"
     );
 
     expect(skillResource).toBeDefined();
+    expect(skillResource!.mimeType).toBe("text/markdown");
+    expect(skillResource!.name).toBe("test-skill");
     expect(skillResource!.size).toBe(expectedSize);
   });
 
-  it("includes size on skill directory collection resources for real files", async () => {
-    const skillPath = path.join(FIXTURES_DIR, "valid-skill", "SKILL.md");
-    const expectedSize = fs.statSync(skillPath).size;
-
-    const client = await createConnectedClient([
-      createTestSkill({ name: "valid", path: skillPath }),
-    ]);
-
-    const result = await client.listResources();
-    const dirResource = result.resources.find(
-      (r) => r.uri === "skill://valid/"
-    );
-
-    expect(dirResource).toBeDefined();
-    expect(dirResource!.size).toBe(expectedSize);
-  });
-
-  it("omits size when skill path does not exist", async () => {
-    const client = await createConnectedClient([
-      createTestSkill({ name: "missing", path: "/fake/path/SKILL.md" }),
-    ]);
-
-    const result = await client.listResources();
-    const skillResource = result.resources.find(
-      (r) => r.uri === "skill://missing"
-    );
-
-    expect(skillResource).toBeDefined();
-    expect(skillResource!.size).toBeUndefined();
-  });
-
-  it("includes annotations alongside size", async () => {
+  it("uses prefix as URI path segment for non-bundled skills", async () => {
     const skillPath = path.join(FIXTURES_DIR, "valid-skill", "SKILL.md");
 
     const client = await createConnectedClient([
       createTestSkill({
-        name: "annotated",
+        name: "my-project__test-skill",
+        baseName: "test-skill",
         path: skillPath,
+        source: createTestSource({ prefix: "my-project" }),
+      }),
+    ]);
+
+    const result = await client.listResources();
+    const skillResource = result.resources.find(
+      (r) => r.uri === "skill://my-project/test-skill/SKILL.md"
+    );
+
+    expect(skillResource).toBeDefined();
+  });
+
+  it("returns SKILL.md content via resources/read", async () => {
+    const skillPath = path.join(FIXTURES_DIR, "valid-skill", "SKILL.md");
+    const expectedContent = fs.readFileSync(skillPath, "utf-8");
+
+    const client = await createConnectedClient([
+      createTestSkill({
+        name: "test-skill",
+        baseName: "test-skill",
+        path: skillPath,
+        source: BUNDLED_SKILL_SOURCE,
+      }),
+    ]);
+
+    const result = await client.readResource({
+      uri: "skill://test-skill/SKILL.md",
+    });
+
+    expect(result.contents).toHaveLength(1);
+    expect(result.contents[0].mimeType).toBe("text/markdown");
+    expect(result.contents[0].text).toBe(expectedContent);
+  });
+
+  it("includes audience annotations and priority 0.8", async () => {
+    const skillPath = path.join(FIXTURES_DIR, "valid-skill", "SKILL.md");
+
+    const client = await createConnectedClient([
+      createTestSkill({
+        name: "test-skill",
+        baseName: "test-skill",
+        path: skillPath,
+        source: BUNDLED_SKILL_SOURCE,
         effectiveAssistantInvocable: true,
         effectiveUserInvocable: false,
       }),
@@ -92,45 +113,217 @@ describe("skill resources: size field", () => {
 
     const result = await client.listResources();
     const resource = result.resources.find(
-      (r) => r.uri === "skill://annotated"
-    );
-
-    expect(resource).toBeDefined();
-    expect(resource!.size).toBeGreaterThan(0);
-    expect(resource!.annotations?.audience).toEqual(["assistant"]);
-  });
-});
-
-describe("skill resources: priority differentiation", () => {
-  it("sets priority 0.8 on primary skill resources", async () => {
-    const skillPath = path.join(FIXTURES_DIR, "valid-skill", "SKILL.md");
-
-    const client = await createConnectedClient([
-      createTestSkill({ name: "test", path: skillPath }),
-    ]);
-
-    const result = await client.listResources();
-    const resource = result.resources.find(
-      (r) => r.uri === "skill://test"
+      (r) => r.uri === "skill://test-skill/SKILL.md"
     );
 
     expect(resource).toBeDefined();
     expect(resource!.annotations?.priority).toBe(0.8);
+    expect(resource!.annotations?.audience).toEqual(["assistant"]);
   });
 
-  it("sets priority 0.3 on directory collection resources", async () => {
-    const skillPath = path.join(FIXTURES_DIR, "valid-skill", "SKILL.md");
-
+  it("omits size when SKILL.md path does not exist", async () => {
     const client = await createConnectedClient([
-      createTestSkill({ name: "test", path: skillPath }),
+      createTestSkill({
+        name: "missing",
+        baseName: "missing",
+        path: "/fake/path/SKILL.md",
+        source: BUNDLED_SKILL_SOURCE,
+      }),
     ]);
 
     const result = await client.listResources();
     const resource = result.resources.find(
-      (r) => r.uri === "skill://test/"
+      (r) => r.uri === "skill://missing/SKILL.md"
     );
 
     expect(resource).toBeDefined();
-    expect(resource!.annotations?.priority).toBe(0.3);
+    expect(resource!.size).toBeUndefined();
+  });
+
+  it("does not list bare skill:// or trailing-slash URIs (legacy shapes)", async () => {
+    const skillPath = path.join(FIXTURES_DIR, "valid-skill", "SKILL.md");
+
+    const client = await createConnectedClient([
+      createTestSkill({
+        name: "test-skill",
+        baseName: "test-skill",
+        path: skillPath,
+        source: BUNDLED_SKILL_SOURCE,
+      }),
+    ]);
+
+    const result = await client.listResources();
+    const legacyBare = result.resources.find((r) => r.uri === "skill://test-skill");
+    const legacyDir = result.resources.find((r) => r.uri === "skill://test-skill/");
+    expect(legacyBare).toBeUndefined();
+    expect(legacyDir).toBeUndefined();
+  });
+});
+
+describe("supporting-file resource (SEP-2640)", () => {
+  it("does NOT list internal files in resources/list", async () => {
+    const skillPath = path.join(FIXTURES_DIR, "with-resources", "SKILL.md");
+
+    const client = await createConnectedClient([
+      createTestSkill({
+        name: "resourceful",
+        baseName: "resourceful",
+        path: skillPath,
+        source: BUNDLED_SKILL_SOURCE,
+      }),
+    ]);
+
+    const result = await client.listResources();
+    const internal = result.resources.find((r) =>
+      r.uri.startsWith("skill://resourceful/scripts/")
+    );
+    expect(internal).toBeUndefined();
+  });
+
+  it("returns file content on resources/read at skill://<path>/<file>", async () => {
+    const skillPath = path.join(FIXTURES_DIR, "with-resources", "SKILL.md");
+    const expectedScript = fs.readFileSync(
+      path.join(FIXTURES_DIR, "with-resources", "scripts", "example.py"),
+      "utf-8"
+    );
+
+    const client = await createConnectedClient([
+      createTestSkill({
+        name: "resourceful",
+        baseName: "resourceful",
+        path: skillPath,
+        source: BUNDLED_SKILL_SOURCE,
+      }),
+    ]);
+
+    const result = await client.readResource({
+      uri: "skill://resourceful/scripts/example.py",
+    });
+
+    expect(result.contents).toHaveLength(1);
+    expect(result.contents[0].text).toBe(expectedScript);
+    expect(result.contents[0].mimeType).toBe("text/x-python");
+  });
+
+  it("rejects path traversal attempts", async () => {
+    const skillPath = path.join(FIXTURES_DIR, "with-resources", "SKILL.md");
+
+    const client = await createConnectedClient([
+      createTestSkill({
+        name: "resourceful",
+        baseName: "resourceful",
+        path: skillPath,
+        source: BUNDLED_SKILL_SOURCE,
+      }),
+    ]);
+
+    await expect(
+      client.readResource({
+        uri: "skill://resourceful/..%2F..%2Fetc%2Fpasswd",
+      })
+    ).rejects.toThrow();
+  });
+
+  it("errors cleanly when file does not exist", async () => {
+    const skillPath = path.join(FIXTURES_DIR, "with-resources", "SKILL.md");
+
+    const client = await createConnectedClient([
+      createTestSkill({
+        name: "resourceful",
+        baseName: "resourceful",
+        path: skillPath,
+        source: BUNDLED_SKILL_SOURCE,
+      }),
+    ]);
+
+    await expect(
+      client.readResource({ uri: "skill://resourceful/nope.txt" })
+    ).rejects.toThrow();
+  });
+});
+
+describe("skill://index.json (SEP-2640 discovery)", () => {
+  it("is listed exactly once in resources/list", async () => {
+    const skillPath = path.join(FIXTURES_DIR, "valid-skill", "SKILL.md");
+
+    const client = await createConnectedClient([
+      createTestSkill({
+        name: "test-skill",
+        baseName: "test-skill",
+        path: skillPath,
+        source: BUNDLED_SKILL_SOURCE,
+      }),
+    ]);
+
+    const result = await client.listResources();
+    const indexes = result.resources.filter((r) => r.uri === "skill://index.json");
+    expect(indexes).toHaveLength(1);
+    expect(indexes[0].mimeType).toBe("application/json");
+  });
+
+  it("returns SEP-shaped JSON on resources/read", async () => {
+    const skillPath1 = path.join(FIXTURES_DIR, "valid-skill", "SKILL.md");
+    const skillPath2 = path.join(FIXTURES_DIR, "with-resources", "SKILL.md");
+
+    const client = await createConnectedClient([
+      createTestSkill({
+        name: "test-skill",
+        baseName: "test-skill",
+        description: "valid test skill",
+        path: skillPath1,
+        source: BUNDLED_SKILL_SOURCE,
+      }),
+      createTestSkill({
+        name: "resourceful",
+        baseName: "resourceful",
+        description: "skill with files",
+        path: skillPath2,
+        source: BUNDLED_SKILL_SOURCE,
+      }),
+    ]);
+
+    const result = await client.readResource({ uri: "skill://index.json" });
+    expect(result.contents).toHaveLength(1);
+    const body = JSON.parse(result.contents[0].text as string);
+
+    expect(body.$schema).toBe(
+      "https://schemas.agentskills.io/discovery/0.2.0/schema.json"
+    );
+    expect(body.skills).toHaveLength(2);
+
+    const test = body.skills.find((s: { name: string }) => s.name === "test-skill");
+    expect(test).toMatchObject({
+      name: "test-skill",
+      type: "skill-md",
+      description: "valid test skill",
+      url: "skill://test-skill/SKILL.md",
+    });
+
+    const resourceful = body.skills.find(
+      (s: { name: string }) => s.name === "resourceful"
+    );
+    expect(resourceful).toMatchObject({
+      name: "resourceful",
+      type: "skill-md",
+      description: "skill with files",
+      url: "skill://resourceful/SKILL.md",
+    });
+  });
+
+  it("uses prefixed URLs for non-bundled skills", async () => {
+    const skillPath = path.join(FIXTURES_DIR, "valid-skill", "SKILL.md");
+
+    const client = await createConnectedClient([
+      createTestSkill({
+        name: "my-project__test-skill",
+        baseName: "test-skill",
+        path: skillPath,
+        source: createTestSource({ prefix: "my-project" }),
+      }),
+    ]);
+
+    const result = await client.readResource({ uri: "skill://index.json" });
+    const body = JSON.parse(result.contents[0].text as string);
+    expect(body.skills[0].url).toBe("skill://my-project/test-skill/SKILL.md");
   });
 });

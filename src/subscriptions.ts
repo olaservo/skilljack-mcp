@@ -5,11 +5,10 @@
  * using chokidar. When files change, sends notifications/resources/updated
  * to subscribed clients.
  *
- * URI patterns supported:
- * - skill://              → Watch all skill directories
- * - skill://{name}        → Watch that skill's SKILL.md
- * - skill://{name}/       → Watch entire skill directory (directory collection)
- * - skill://{name}/{path} → Watch specific file (subscribable but not listed as resource)
+ * URI patterns supported (SEP-2640):
+ * - skill://index.json              → Watch every SKILL.md (any skill change re-fires)
+ * - skill://<skill-path>/SKILL.md   → Watch that skill's SKILL.md
+ * - skill://<skill-path>/<file>     → Watch a specific file inside the skill directory
  */
 
 import chokidar, { FSWatcher } from "chokidar";
@@ -20,6 +19,7 @@ import {
   UnsubscribeRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { SkillState, isPathWithinBase } from "./skill-tool.js";
+import { parseSkillResourceUri } from "./skill-discovery.js";
 
 /**
  * Manages active subscriptions and their associated file watchers.
@@ -64,49 +64,26 @@ export function resolveUriToFilePaths(
   uri: string,
   skillState: SkillState
 ): string[] {
-  // skill:// → Watch all skill directories
-  if (uri === "skill://") {
-    const paths: string[] = [];
-    for (const skill of skillState.skillMap.values()) {
-      paths.push(path.dirname(skill.path)); // Watch entire skill directory
-    }
-    return paths;
+  // SEP-2640 index → watch every SKILL.md so any skill change re-fires.
+  if (uri === "skill://index.json") {
+    return Array.from(skillState.skillMap.values()).map((s) => s.path);
   }
 
-  // skill://{skillName} → Just the SKILL.md file
-  const skillMatch = uri.match(/^skill:\/\/([^/]+)$/);
-  if (skillMatch) {
-    const skillName = decodeURIComponent(skillMatch[1]);
-    const skill = skillState.skillMap.get(skillName);
-    return skill ? [skill.path] : [];
+  const parsed = parseSkillResourceUri(uri, skillState.skillMap);
+  if (!parsed) return [];
+
+  const { skill, fileRelPath } = parsed;
+
+  // skill://<skill-path>/SKILL.md → that skill's SKILL.md
+  if (fileRelPath === "SKILL.md") {
+    return [skill.path];
   }
 
-  // skill://{skillName}/ → Watch entire skill directory (directory collection)
-  const dirMatch = uri.match(/^skill:\/\/([^/]+)\/$/);
-  if (dirMatch) {
-    const skillName = decodeURIComponent(dirMatch[1]);
-    const skill = skillState.skillMap.get(skillName);
-    return skill ? [path.dirname(skill.path)] : [];
-  }
-
-  // skill://{skillName}/{path} → Specific file
-  const fileMatch = uri.match(/^skill:\/\/([^/]+)\/(.+)$/);
-  if (fileMatch) {
-    const skillName = decodeURIComponent(fileMatch[1]);
-    const filePath = fileMatch[2];
-    const skill = skillState.skillMap.get(skillName);
-    if (!skill) return [];
-
-    const skillDir = path.dirname(skill.path);
-    const fullPath = path.resolve(skillDir, filePath);
-
-    // Security check: ensure path is within skill directory
-    if (!isPathWithinBase(fullPath, skillDir)) return [];
-
-    return [fullPath];
-  }
-
-  return [];
+  // skill://<skill-path>/<file> → specific file inside the skill directory
+  const skillDir = path.dirname(skill.path);
+  const fullPath = path.resolve(skillDir, fileRelPath);
+  if (!isPathWithinBase(fullPath, skillDir)) return [];
+  return [fullPath];
 }
 
 /**

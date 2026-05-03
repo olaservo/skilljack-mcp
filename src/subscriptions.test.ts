@@ -1,49 +1,79 @@
 import { describe, it, expect } from "vitest";
 import * as path from "node:path";
 import { resolveUriToFilePaths } from "./subscriptions.js";
-import { createTestSkill, createTestSkillState } from "./__test-helpers__/helpers.js";
+import { BUNDLED_SKILL_SOURCE } from "./skill-discovery.js";
+import {
+  createTestSkill,
+  createTestSkillState,
+  createTestSource,
+} from "./__test-helpers__/helpers.js";
 
-describe("resolveUriToFilePaths", () => {
-  const skill1 = createTestSkill({
+describe("resolveUriToFilePaths (SEP-2640)", () => {
+  const bundled = createTestSkill({
     name: "my-skill",
+    baseName: "my-skill",
     path: "/skills/my-skill/SKILL.md",
+    source: BUNDLED_SKILL_SOURCE,
   });
-  const skill2 = createTestSkill({
-    name: "other-skill",
+  const prefixed = createTestSkill({
+    name: "my-project__other-skill",
+    baseName: "other-skill",
     path: "/skills/other-skill/SKILL.md",
+    source: createTestSource({ prefix: "my-project" }),
   });
-  const state = createTestSkillState([skill1, skill2]);
+  const state = createTestSkillState([bundled, prefixed]);
 
-  it("resolves skill:// to all skill directory paths", () => {
-    const paths = resolveUriToFilePaths("skill://", state);
+  it("resolves skill://index.json to every SKILL.md path", () => {
+    const paths = resolveUriToFilePaths("skill://index.json", state);
     expect(paths).toHaveLength(2);
-    expect(paths).toContain(path.dirname(skill1.path));
-    expect(paths).toContain(path.dirname(skill2.path));
+    expect(paths).toContain(bundled.path);
+    expect(paths).toContain(prefixed.path);
   });
 
-  it("resolves skill://name to SKILL.md path", () => {
-    const paths = resolveUriToFilePaths("skill://my-skill", state);
-    expect(paths).toEqual(["/skills/my-skill/SKILL.md"]);
+  it("resolves skill://<base>/SKILL.md (bundled) to that SKILL.md", () => {
+    const paths = resolveUriToFilePaths("skill://my-skill/SKILL.md", state);
+    expect(paths).toEqual([bundled.path]);
   });
 
-  it("resolves skill://name/ to skill directory path", () => {
-    const paths = resolveUriToFilePaths("skill://my-skill/", state);
-    expect(paths).toEqual([path.dirname(skill1.path)]);
+  it("resolves skill://<prefix>/<base>/SKILL.md to that SKILL.md", () => {
+    const paths = resolveUriToFilePaths(
+      "skill://my-project/other-skill/SKILL.md",
+      state
+    );
+    expect(paths).toEqual([prefixed.path]);
   });
 
-  it("resolves skill://name/path to absolute file path", () => {
-    const paths = resolveUriToFilePaths("skill://my-skill/scripts/example.py", state);
+  it("resolves skill://<path>/<file> to absolute file path", () => {
+    const paths = resolveUriToFilePaths(
+      "skill://my-skill/scripts/example.py",
+      state
+    );
     expect(paths).toHaveLength(1);
     expect(paths[0]).toBe(path.resolve("/skills/my-skill", "scripts/example.py"));
   });
 
-  it("returns empty array for unknown skill name", () => {
-    const paths = resolveUriToFilePaths("skill://nonexistent", state);
+  it("rejects path traversal", () => {
+    const paths = resolveUriToFilePaths(
+      "skill://my-skill/..%2F..%2Fetc%2Fpasswd",
+      state
+    );
     expect(paths).toEqual([]);
   });
 
-  it("returns empty array for unmatched URI patterns", () => {
-    const paths = resolveUriToFilePaths("http://example.com", state);
+  it("returns [] for unknown skill", () => {
+    const paths = resolveUriToFilePaths("skill://nonexistent/SKILL.md", state);
     expect(paths).toEqual([]);
+  });
+
+  it("returns [] for legacy bare skill://name URI", () => {
+    expect(resolveUriToFilePaths("skill://my-skill", state)).toEqual([]);
+  });
+
+  it("returns [] for legacy skill://name/ URI", () => {
+    expect(resolveUriToFilePaths("skill://my-skill/", state)).toEqual([]);
+  });
+
+  it("returns [] for non-skill scheme", () => {
+    expect(resolveUriToFilePaths("http://example.com", state)).toEqual([]);
   });
 });

@@ -9,7 +9,12 @@
 import { McpServer, RegisteredPrompt } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { completable } from "@modelcontextprotocol/sdk/server/completable.js";
 import { z } from "zod";
-import { loadSkillContent, generateInstructions, getUserInvocableSkills } from "./skill-discovery.js";
+import {
+  loadSkillContent,
+  generateInstructions,
+  getUserInvocableSkills,
+  buildSkillResourceUri,
+} from "./skill-discovery.js";
 import { SkillState } from "./skill-tool.js";
 
 /**
@@ -99,7 +104,7 @@ export function registerSkillPrompts(
               content: {
                 type: "resource",
                 resource: {
-                  uri: `skill://${name}`,
+                  uri: buildSkillResourceUri(skill, "SKILL.md"),
                   mimeType: "text/markdown",
                   text: content,
                 },
@@ -183,6 +188,7 @@ export function registerSkillPrompts(
     // Capture skill info in closure for this specific prompt
     const skillPath = skill.path;
     const skillName = name;
+    const skillUri = buildSkillResourceUri(skill, "SKILL.md");
     const prompt = server.registerPrompt(
       name,
       {
@@ -200,7 +206,7 @@ export function registerSkillPrompts(
                 content: {
                   type: "resource" as const,
                   resource: {
-                    uri: `skill://${skillName}`,
+                    uri: skillUri,
                     mimeType: "text/markdown",
                     text: content,
                   },
@@ -289,6 +295,7 @@ export function refreshPrompts(
       // Register new skill prompt with embedded resource
       const skillPath = skill.path;
       const skillName = name;
+      const skillUri = buildSkillResourceUri(skill, "SKILL.md");
       const prompt = server.registerPrompt(
         name,
         {
@@ -305,7 +312,7 @@ export function refreshPrompts(
                   content: {
                     type: "resource" as const,
                     resource: {
-                      uri: `skill://${skillName}`,
+                      uri: skillUri,
                       mimeType: "text/markdown",
                       text: content,
                     },
