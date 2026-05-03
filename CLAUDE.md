@@ -25,7 +25,7 @@ src/
 ├── skill-discovery.ts # YAML frontmatter parsing, XML generation
 ├── skill-tool.ts      # MCP tools: skill, skill-resource
 ├── skill-prompts.ts   # MCP Prompts: /skill with auto-completion, per-skill prompts
-├── skill-resources.ts # MCP Resources: skill:// URI scheme
+├── skill-resources.ts # MCP Resources: SEP-2640 skill:// URI scheme + skill://index.json
 └── subscriptions.ts   # File watching, resource subscriptions
 ```
 
@@ -67,6 +67,10 @@ src/
 | `refreshSkills()` | index.ts | Re-discover + update tool/prompts + notify clients |
 | `watchSkillDirectories()` | index.ts | Set up chokidar watchers (skipped in static mode) |
 | `sanitizePrefix()` | skill-discovery.ts | Clean prefix strings for qualified names |
+| `getSkillPath()` | skill-discovery.ts | Compute SEP-2640 `<skill-path>` (`<prefix>/<baseName>` or just `<baseName>`) |
+| `buildSkillResourceUri()` | skill-discovery.ts | Build a `skill://<skill-path>/<file>` URI |
+| `parseSkillResourceUri()` | skill-discovery.ts | Resolve a `skill://` URI back to a skill + file relpath |
+| `buildSkillIndex()` | skill-discovery.ts | Build the JSON document served at `skill://index.json` |
 | `generateInstructions()` | skill-discovery.ts | Create XML skill list |
 | `getToolDescription()` | skill-tool.ts | Usage text + skill list for tool desc |
 | `registerSkillPrompts()` | skill-prompts.ts | Register /skill + per-skill prompts |
@@ -91,18 +95,33 @@ src/
 capabilities: {
   tools: { listChanged: !isStatic },      // Dynamic tool updates (disabled in static mode)
   resources: { subscribe: true, listChanged: true },
-  prompts: { listChanged: !isStatic }     // Dynamic prompt updates (disabled in static mode)
+  prompts: { listChanged: !isStatic },    // Dynamic prompt updates (disabled in static mode)
+  extensions: {
+    "io.modelcontextprotocol/skills": {}, // SEP-2640 Skills Extension
+  },
 }
 ```
 
 In static mode (`--static` or `SKILLJACK_STATIC=true`), `tools.listChanged` and `prompts.listChanged` are set to `false`. Resource subscriptions remain fully dynamic.
+
+## Resource URIs (SEP-2640)
+
+The resource layer follows [SEP-2640 (Skills Extension)](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640):
+
+| URI | Returns |
+|-----|---------|
+| `skill://<skill-path>/SKILL.md` | The skill's SKILL.md (`text/markdown`). Listed. |
+| `skill://<skill-path>/<file-path>` | A supporting file inside the skill directory. Not listed; template-resolvable. |
+| `skill://index.json` | SEP-2640 discovery index (`application/json`). Listed. |
+
+`<skill-path>` is `<prefix>/<baseName>` for prefixed skills (local: dir basename, GitHub: `owner-repo`) or just `<baseName>` for bundled. The final URI segment always equals the frontmatter `name` per SEP. Build/parse via `buildSkillResourceUri()` / `parseSkillResourceUri()` in `skill-discovery.ts`.
 
 ## Notifications Sent
 
 - `notifications/tools/list_changed` - When skills change (add/modify/remove)
 - `notifications/prompts/list_changed` - When skills change (add/modify/remove)
 - `notifications/resources/list_changed` - When skills change
-- `notifications/resources/updated` - When subscribed resource files change
+- `notifications/resources/updated` - When subscribed resource files change. Also fired explicitly for `skill://index.json` from `refreshSkills()` so subscribers see add/remove changes even without an underlying SKILL.md modification.
 
 ## Conventions
 
