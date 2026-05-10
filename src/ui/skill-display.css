@@ -182,6 +182,11 @@ h1 {
   color: #fff;
 }
 
+.source-badge.well-known {
+  background: #0a7c5a;
+  color: #fff;
+}
+
 .source-icon {
   flex-shrink: 0;
 }

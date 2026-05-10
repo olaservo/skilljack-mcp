@@ -12,7 +12,7 @@ import {
 interface DirectoryInfo {
   path: string;
   source: "cli" | "env" | "config";
-  type: "local" | "github";
+  type: "local" | "github" | "well-known";
   valid: boolean;
   allowed: boolean;
   skillCount?: number;
@@ -173,7 +173,7 @@ function renderDirectories() {
   directoryList.innerHTML = directories
     .map((dir) => {
       const isReadOnly = dir.source !== "config";
-      const isBlocked = dir.type === "github" && !dir.allowed;
+      const isBlocked = (dir.type === "github" || dir.type === "well-known") && !dir.allowed;
       return `
       <div class="directory-card ${isReadOnly ? "readonly" : ""} ${isBlocked ? "blocked" : ""}">
         ${isReadOnly ? `<span class="lock-icon" title="Read-only: configured via ${dir.source.toUpperCase()}">&#128274;</span>` : ""}

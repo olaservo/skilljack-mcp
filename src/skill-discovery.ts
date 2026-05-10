@@ -15,11 +15,12 @@ import type { Annotations } from "@modelcontextprotocol/sdk/types.js";
  * Indicates whether the skill comes from a local directory or GitHub repository.
  */
 export interface SkillSource {
-  type: "local" | "github" | "bundled";
-  displayName: string; // "Local", "owner/repo", or "Bundled"
+  type: "local" | "github" | "bundled" | "well-known";
+  displayName: string; // "Local", "owner/repo", "Bundled", or "<origin><base-path>"
   prefix: string; // Namespace prefix for skill names (e.g., "my-project", "owner-repo", "" for bundled)
   owner?: string; // GitHub org/user (only for github type)
   repo?: string; // GitHub repo name (only for github type)
+  origin?: string; // Well-known origin (only for well-known type, e.g. "https://example.com")
 }
 
 /**

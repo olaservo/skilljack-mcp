@@ -18,7 +18,7 @@ interface SkillDisplayInfo {
   isAssistantOverridden: boolean;
   isUserOverridden: boolean;
   // Source information
-  sourceType: "local" | "github" | "bundled";
+  sourceType: "local" | "github" | "bundled" | "well-known";
   sourceDisplayName: string;
   sourceOwner?: string;
   sourceRepo?: string;
@@ -147,6 +147,13 @@ function renderSkills() {
                <path fill="currentColor" d="M8.878.392a1.75 1.75 0 0 0-1.756 0l-5.25 3.045A1.75 1.75 0 0 0 1 4.951v6.098c0 .624.332 1.2.872 1.514l5.25 3.045a1.75 1.75 0 0 0 1.756 0l5.25-3.045c.54-.313.872-.89.872-1.514V4.951c0-.624-.332-1.2-.872-1.514L8.878.392ZM8 3.5a.75.75 0 0 1 .75.75v3.75a.75.75 0 0 1-1.5 0V4.25A.75.75 0 0 1 8 3.5Zm0 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/>
              </svg>
              Bundled
+           </span>`;
+      } else if (skill.sourceType === "well-known") {
+        sourceBadge = `<span class="source-badge well-known" title="From well-known publisher: ${escapeHtml(skill.sourceDisplayName)}">
+             <svg class="source-icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+               <path fill="currentColor" d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 011.92-4.62 22.65 22.65 0 00-.71 2.78H1.62A6.46 6.46 0 011.5 8zm.7 1.66h.92c.13.95.33 1.83.6 2.6A6.51 6.51 0 012.2 9.66zm6.05 4.84a8.6 8.6 0 01-1.4-2.84h2.8a8.6 8.6 0 01-1.4 2.84zM6.45 10c-.18-.7-.32-1.47-.4-2.34h3.9c-.08.87-.22 1.64-.4 2.34zm-.4-3.66c.08-.87.22-1.64.4-2.34h3.1c.18.7.32 1.47.4 2.34zM5.55 1.5a8.6 8.6 0 011.4 2.84h-2.8a8.6 8.6 0 011.4-2.84zM3.12 4.34a6.51 6.51 0 011.52-2.6c-.27.77-.47 1.65-.6 2.6h-.92zm-.92 1.66h1c-.05.55-.07 1.11-.07 1.66s.02 1.11.07 1.66h-1A6.46 6.46 0 012.2 8c0-.7.07-1.36.2-2zm10.68 0a6.46 6.46 0 010 4h-1c.05-.55.07-1.11.07-1.66s-.02-1.11-.07-1.66h1zM12.88 4.34h-.92c-.13-.95-.33-1.83-.6-2.6a6.51 6.51 0 011.52 2.6zm-1.04 7.32a6.51 6.51 0 01-1.52 2.6c.27-.77.47-1.65.6-2.6h.92zM10.43 6h-.93c.06.55.08 1.11.08 1.66 0 .55-.02 1.11-.08 1.66h.93c.13-.65.2-1.31.2-1.66s-.07-1.01-.2-1.66z"/>
+             </svg>
+             ${escapeHtml(skill.sourceDisplayName)}
            </span>`;
       } else {
         sourceBadge = `<span class="source-badge local" title="Local skill directory">

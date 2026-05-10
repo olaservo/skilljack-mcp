@@ -12,27 +12,39 @@
 - `SKILLS_DIR` - Comma-separated list of skill directories
 - `SKILLJACK_STATIC` - Set to `true`, `1`, or `yes` to enable static mode
 - `MAX_FILE_SIZE_MB` - Maximum file size for skill resources (default: 1MB)
+- `WELL_KNOWN_ALLOWED_ORIGINS` - Comma-separated origins (e.g. `https://example.com`) permitted as well-known publishers. Default-deny.
+- `WELL_KNOWN_POLL_INTERVAL_MS` - Well-known poll cadence (default 300000, `0` disables)
+- `WELL_KNOWN_MAX_ARTIFACT_MB` - Per-artifact byte cap (default 10)
+- `WELL_KNOWN_MAX_UNPACKED_MB` - Archive uncompressed size cap (default 50)
+- `WELL_KNOWN_ALLOW_HTTP` - `1`/`true`/`yes` to permit `http://` origins (dev only)
 
 **CLI Options:**
-- Positional args: Skill directories
+- Positional args: Skill directories, GitHub URLs, or well-known publisher URLs (e.g. `https://example.com/.well-known/agent-skills/`)
 - `--static`: Enable static mode (freeze skills at startup, no file watching)
 
 ## Project Structure
 
 ```
 src/
-├── index.ts           # Entry point, server setup, file watching, stdio transport
-├── skill-discovery.ts # YAML frontmatter parsing, XML generation
-├── skill-tool.ts      # MCP tools: skill, skill-resource
-├── skill-prompts.ts   # MCP Prompts: /skill with auto-completion, per-skill prompts
-├── skill-resources.ts # MCP Resources: SEP-2640 skill:// URI scheme + skill://index.json
-└── subscriptions.ts   # File watching, resource subscriptions
+├── index.ts             # Entry point, server setup, file watching, stdio transport
+├── skill-discovery.ts   # YAML frontmatter parsing, XML generation
+├── skill-tool.ts        # MCP tools: skill, skill-resource
+├── skill-prompts.ts     # MCP Prompts: /skill with auto-completion, per-skill prompts
+├── skill-resources.ts   # MCP Resources: SEP-2640 skill:// URI scheme + skill://index.json
+├── subscriptions.ts     # File watching, resource subscriptions
+├── github-config.ts     # GitHub URL detection, parsing, allowlist
+├── github-sync.ts       # Clone/pull GitHub repos into the cache
+├── github-polling.ts    # Periodic GitHub update checks
+├── well-known-config.ts # Well-known URL detection, parsing, allowlist
+├── well-known-sync.ts   # Fetch + verify (SHA-256) + safely extract publisher artifacts
+└── well-known-polling.ts # Periodic well-known index re-fetch (ETag/If-None-Match)
 ```
 
 ## Key Abstractions
 
 **SkillSource** - Origin info with namespace prefix:
-- `prefix: string` - Namespace prefix (local: dir basename, GitHub: `owner-repo`, bundled: `""`)
+- `prefix: string` - Namespace prefix (local: dir basename, GitHub: `owner-repo`, well-known: `<host-slug>[_<base-path-slug>]`, bundled: `""`)
+- `type: "local" | "github" | "bundled" | "well-known"` - Which source pulled the skill
 
 **SkillState** - Shared state:
 - `skillMap: Map<string, SkillMetadata>` - qualified name → skill lookup
@@ -77,6 +89,29 @@ src/
 | `refreshPrompts()` | skill-prompts.ts | Update prompts when skills change |
 | `getPromptDescription()` | skill-prompts.ts | Usage text + skill list for prompt desc |
 | `refreshSubscriptions()` | subscriptions.ts | Update watchers when skills change |
+| `parseWellKnownUrl()` | well-known-config.ts | Normalize a publisher URL into `{origin, basePath}`, auto-appending `/.well-known/agent-skills` |
+| `isOriginAllowed()` | well-known-config.ts | Default-deny allowlist check for well-known origins |
+| `syncWellKnown()` | well-known-sync.ts | Fetch index.json, verify each entry's SHA-256 digest, write/extract into the cache |
+| `validateIndexDocument()` | well-known-sync.ts | Shape-check a parsed index document and reject malformed entries |
+| `archiveFormatFromUrl()` | well-known-sync.ts | Pick `tar.gz` / `zip` / `null` from an artifact URL |
+| `hasRemoteUpdates()` | well-known-sync.ts | Conditional GET on index.json (ETag/If-Modified-Since) |
+| `createWellKnownPollingManager()` | well-known-polling.ts | Periodic index re-check, mirrors GitHub polling shape |
+
+## Well-Known Discovery (.well-known/agent-skills/)
+
+Implements [the agent-skills discovery RFC](https://github.com/cloudflare/agent-skills-discovery-rfc). Configure a publisher origin:
+
+```bash
+WELL_KNOWN_ALLOWED_ORIGINS=https://example.com \
+  skilljack-mcp https://example.com/.well-known/agent-skills/
+```
+
+- **Default-deny**: origins must be on the allowlist (env var or `wellKnownAllowedOrigins` in `~/.skilljack/config.json`).
+- **Digest verification**: every artifact byte stream is SHA-256-hashed and compared against the index entry's `digest` (`sha256:<64 hex>`). Mismatch → entry is rejected and not written to disk.
+- **Archive safety**: `.tar.gz` (via `tar`) and `.zip` (via `yauzl-promise`) are extracted with rejection of absolute paths, parent traversal (`..`), symlinks/hardlinks, and uncompressed sizes over `WELL_KNOWN_MAX_UNPACKED_MB`.
+- **Cache layout**: `~/.skilljack/well-known-cache/<host-slug>[_<path-slug>]/skills/<skill-name>/SKILL.md`. The `skills/` root is added to `currentSkillsDirs` so `discoverSkills()` picks them up like any local source.
+- **Conditional refetch**: `index.json` ETag/Last-Modified are stored alongside the cache and replayed via `If-None-Match` / `If-Modified-Since` on the next poll.
+- **Pruning**: skills removed from the index have their per-skill cache directories deleted on the next sync.
 
 ## Modification Guide
 

@@ -88,7 +88,7 @@ interface SkillDisplayInfo {
   isAssistantOverridden: boolean;
   isUserOverridden: boolean;
   // Source information
-  sourceType: "local" | "github" | "bundled";
+  sourceType: "local" | "github" | "bundled" | "well-known";
   sourceDisplayName: string;
   sourceOwner?: string;
   sourceRepo?: string;
@@ -153,7 +153,7 @@ export function registerSkillDisplayTool(
           userInvocable: z.boolean(),
           isAssistantOverridden: z.boolean(),
           isUserOverridden: z.boolean(),
-          sourceType: z.enum(["local", "github", "bundled"]),
+          sourceType: z.enum(["local", "github", "bundled", "well-known"]),
           sourceDisplayName: z.string(),
           sourceOwner: z.string().optional(),
           sourceRepo: z.string().optional(),
@@ -205,7 +205,7 @@ export function registerSkillDisplayTool(
           userInvocable: z.boolean(),
           isAssistantOverridden: z.boolean(),
           isUserOverridden: z.boolean(),
-          sourceType: z.enum(["local", "github", "bundled"]),
+          sourceType: z.enum(["local", "github", "bundled", "well-known"]),
           sourceDisplayName: z.string(),
           sourceOwner: z.string().optional(),
           sourceRepo: z.string().optional(),
@@ -298,7 +298,7 @@ export function registerSkillDisplayTool(
           userInvocable: z.boolean(),
           isAssistantOverridden: z.boolean(),
           isUserOverridden: z.boolean(),
-          sourceType: z.enum(["local", "github", "bundled"]),
+          sourceType: z.enum(["local", "github", "bundled", "well-known"]),
           sourceDisplayName: z.string(),
           sourceOwner: z.string().optional(),
           sourceRepo: z.string().optional(),

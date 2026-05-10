@@ -13,6 +13,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { isGitHubUrl, parseGitHubUrl, isRepoAllowed, getGitHubConfig } from "./github-config.js";
+import {
+  isWellKnownUrl,
+  parseWellKnownUrl,
+  isOriginAllowed,
+  getWellKnownConfig,
+} from "./well-known-config.js";
 
 /**
  * Invocation settings that can be overridden per skill.
@@ -31,6 +37,7 @@ export interface SkillConfig {
   skillInvocationOverrides?: Record<string, SkillInvocationOverrides>;
   githubAllowedOrgs?: string[];
   githubAllowedUsers?: string[];
+  wellKnownAllowedOrigins?: string[];
 }
 
 /**
@@ -39,9 +46,9 @@ export interface SkillConfig {
 export type DirectorySource = "cli" | "env" | "config";
 
 /**
- * Type of skill source (local directory or GitHub repo).
+ * Type of skill source (local directory, GitHub repo, or well-known publisher).
  */
-export type SourceType = "local" | "github";
+export type SourceType = "local" | "github" | "well-known";
 
 /**
  * A skill directory with its source information.
@@ -56,11 +63,14 @@ export interface DirectoryInfo {
 }
 
 /**
- * Check if a path is valid (exists for local, always valid for GitHub).
+ * Check if a path is valid (exists for local, always valid for remote sources).
  */
 function isValidPath(p: string): boolean {
   if (isGitHubUrl(p)) {
     return true; // GitHub URLs are validated during sync
+  }
+  if (isWellKnownUrl(p)) {
+    return true; // Well-known URLs are validated during sync
   }
   return fs.existsSync(p);
 }
@@ -69,24 +79,45 @@ function isValidPath(p: string): boolean {
  * Get the source type for a path.
  */
 function getSourceType(p: string): SourceType {
-  return isGitHubUrl(p) ? "github" : "local";
+  if (isGitHubUrl(p)) return "github";
+  if (isWellKnownUrl(p)) return "well-known";
+  return "local";
 }
 
 /**
- * Check if a path is allowed (local paths are always allowed,
- * GitHub URLs must have their org/user in the allowlist).
+ * Check if a path is allowed.
+ *   - Local paths: always allowed.
+ *   - GitHub URLs: org/user must be in the GitHub allowlist.
+ *   - Well-known URLs: origin must be in the well-known allowlist.
  */
 function isPathAllowed(p: string): boolean {
-  if (!isGitHubUrl(p)) {
-    return true; // Local paths are always allowed
+  if (isGitHubUrl(p)) {
+    try {
+      const spec = parseGitHubUrl(p);
+      const config = getGitHubConfig();
+      return isRepoAllowed(spec, config);
+    } catch {
+      return false;
+    }
   }
-  try {
-    const spec = parseGitHubUrl(p);
-    const config = getGitHubConfig();
-    return isRepoAllowed(spec, config);
-  } catch {
-    return false; // Invalid GitHub URL
+  if (isWellKnownUrl(p)) {
+    try {
+      const config = getWellKnownConfig();
+      const spec = parseWellKnownUrl(p, config.allowHttp);
+      return isOriginAllowed(spec, config);
+    } catch {
+      return false;
+    }
   }
+  return true; // Local paths
+}
+
+/**
+ * True iff `p` is a remote URL (GitHub or well-known) that should be passed
+ * through unchanged rather than resolved as a local path.
+ */
+function isRemoteUrl(p: string): boolean {
+  return isGitHubUrl(p) || isWellKnownUrl(p);
 }
 
 /**
@@ -150,7 +181,7 @@ export function loadConfigFile(): SkillConfig {
     const skillDirectories = Array.isArray(parsed.skillDirectories)
       ? parsed.skillDirectories
           .filter((p: unknown) => typeof p === "string")
-          .map((p: string) => isGitHubUrl(p) ? p : path.resolve(p))
+          .map((p: string) => isRemoteUrl(p) ? p : path.resolve(p))
       : [];
 
     // Validate and normalize invocation overrides
@@ -175,6 +206,9 @@ export function loadConfigFile(): SkillConfig {
       staticMode: parsed.staticMode === true,
       githubAllowedOrgs: Array.isArray(parsed.githubAllowedOrgs) ? parsed.githubAllowedOrgs : [],
       githubAllowedUsers: Array.isArray(parsed.githubAllowedUsers) ? parsed.githubAllowedUsers : [],
+      wellKnownAllowedOrigins: Array.isArray(parsed.wellKnownAllowedOrigins)
+        ? parsed.wellKnownAllowedOrigins.filter((o: unknown): o is string => typeof o === "string")
+        : [],
     };
   } catch (error) {
     console.error(`Warning: Failed to parse config file: ${error}`);
@@ -210,7 +244,7 @@ export function parseCLIArgs(): string[] {
         .split(PATH_LIST_SEPARATOR)
         .map((p) => p.trim())
         .filter((p) => p.length > 0)
-        .map((p) => isGitHubUrl(p) ? p : path.resolve(p));
+        .map((p) => isRemoteUrl(p) ? p : path.resolve(p));
       dirs.push(...paths);
     }
   }
@@ -232,7 +266,7 @@ export function parseEnvVar(): string[] {
     .split(PATH_LIST_SEPARATOR)
     .map((p) => p.trim())
     .filter((p) => p.length > 0)
-    .map((p) => isGitHubUrl(p) ? p : path.resolve(p));
+    .map((p) => isRemoteUrl(p) ? p : path.resolve(p));
 
   return [...new Set(dirs)]; // Deduplicate
 }
@@ -354,11 +388,11 @@ export function getAllDirectoriesWithSources(): DirectoryInfo[] {
  * Does not affect CLI or env var configurations.
  */
 export function addDirectoryToConfig(directory: string): void {
-  // For GitHub URLs, store as-is; for local paths, resolve to absolute
-  const normalized = isGitHubUrl(directory) ? directory : path.resolve(directory);
+  // For remote URLs, store as-is; for local paths, resolve to absolute
+  const normalized = isRemoteUrl(directory) ? directory : path.resolve(directory);
 
   // Validate local directories exist
-  if (!isGitHubUrl(directory)) {
+  if (!isRemoteUrl(directory)) {
     if (!fs.existsSync(normalized)) {
       throw new Error(`Directory does not exist: ${normalized}`);
     }
@@ -384,8 +418,8 @@ export function addDirectoryToConfig(directory: string): void {
  * Only removes from config file, not CLI or env var.
  */
 export function removeDirectoryFromConfig(directory: string): void {
-  // For GitHub URLs, use as-is; for local paths, resolve to absolute
-  const normalized = isGitHubUrl(directory) ? directory : path.resolve(directory);
+  // For remote URLs, use as-is; for local paths, resolve to absolute
+  const normalized = isRemoteUrl(directory) ? directory : path.resolve(directory);
   const config = loadConfigFile();
 
   const index = config.skillDirectories.indexOf(normalized);
@@ -556,6 +590,46 @@ export function removeGitHubAllowedUser(user: string): void {
   const normalized = user.toLowerCase().trim();
   config.githubAllowedUsers = config.githubAllowedUsers.filter(
     (u) => u.toLowerCase() !== normalized
+  );
+  saveConfigFile(config);
+}
+
+/**
+ * Get the well-known allowed origins from the config file.
+ */
+export function getWellKnownAllowedOrigins(): string[] {
+  const config = loadConfigFile();
+  return config.wellKnownAllowedOrigins || [];
+}
+
+/**
+ * Add a well-known origin to the allowed list.
+ * @param origin - Origin string like "https://example.com"
+ */
+export function addWellKnownAllowedOrigin(origin: string): void {
+  const config = loadConfigFile();
+  if (!config.wellKnownAllowedOrigins) {
+    config.wellKnownAllowedOrigins = [];
+  }
+  const normalized = origin.toLowerCase().trim();
+  if (!config.wellKnownAllowedOrigins.some((o) => o.toLowerCase() === normalized)) {
+    config.wellKnownAllowedOrigins.push(origin.trim());
+    saveConfigFile(config);
+  }
+}
+
+/**
+ * Remove a well-known origin from the allowed list.
+ * @param origin - Origin string like "https://example.com"
+ */
+export function removeWellKnownAllowedOrigin(origin: string): void {
+  const config = loadConfigFile();
+  if (!config.wellKnownAllowedOrigins) {
+    return;
+  }
+  const normalized = origin.toLowerCase().trim();
+  config.wellKnownAllowedOrigins = config.wellKnownAllowedOrigins.filter(
+    (o) => o.toLowerCase() !== normalized
   );
   saveConfigFile(config);
 }

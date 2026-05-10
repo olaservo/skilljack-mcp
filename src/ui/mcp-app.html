@@ -140,15 +140,15 @@
       </div>
       <div class="modal-body">
         <div class="form-group">
-          <label for="directory-path">Directory Path or GitHub URL</label>
+          <label for="directory-path">Directory Path, GitHub URL, or Well-Known URL</label>
           <input
             type="text"
             id="directory-path"
-            placeholder="/path/to/skills or github.com/org/repo"
+            placeholder="/path, github.com/org/repo, or https://example.com/.well-known/agent-skills/"
           >
           <div class="form-hint">
-            Local path or GitHub URL to a directory containing skill folders (each with a SKILL.md file).
-            <br>Examples: <code>C:\skills</code>, <code>github.com/org/repo</code>, <code>github.com/org/repo/subdir</code>
+            Local path, GitHub repository, or HTTPS publisher serving <code>/.well-known/agent-skills/index.json</code>.
+            <br>Examples: <code>C:\skills</code>, <code>github.com/org/repo</code>, <code>github.com/org/repo/subdir</code>, <code>https://example.com/.well-known/agent-skills/</code>
           </div>
         </div>
       </div>

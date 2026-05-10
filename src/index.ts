@@ -6,11 +6,12 @@
  * Provides global skills with tools for progressive disclosure.
  *
  * Usage:
- *   skilljack-mcp /path/to/skills [/path2 ...]           # Local directories
- *   skilljack-mcp --static /path/to/skills               # Static mode (no file watching)
- *   skilljack-mcp github.com/owner/repo                  # GitHub repository
- *   skilljack-mcp /local github.com/owner/repo           # Mixed local + GitHub
- *   SKILLS_DIR=/path,github.com/owner/repo skilljack-mcp # Via environment
+ *   skilljack-mcp /path/to/skills [/path2 ...]                       # Local directories
+ *   skilljack-mcp --static /path/to/skills                           # Static mode (no file watching)
+ *   skilljack-mcp github.com/owner/repo                              # GitHub repository
+ *   skilljack-mcp https://example.com/.well-known/agent-skills/      # Well-known publisher
+ *   skilljack-mcp /local github.com/o/r https://ex.com               # Mixed sources
+ *   SKILLS_DIR=/path,github.com/owner/repo skilljack-mcp             # Via environment
  *   SKILLJACK_STATIC=true skilljack-mcp                  # Static mode via env
  *   (or configure local directories via the skill-config UI)
  *
@@ -49,6 +50,24 @@ import {
 } from "./github-config.js";
 import { syncAllRepos, SyncOptions } from "./github-sync.js";
 import { createPollingManager, PollingManager } from "./github-polling.js";
+import {
+  isWellKnownUrl,
+  parseWellKnownUrl,
+  isOriginAllowed,
+  getWellKnownConfig,
+  getWellKnownCachePath,
+  getWellKnownDisplayName,
+  getWellKnownPrefix,
+  WellKnownSpec,
+} from "./well-known-config.js";
+import {
+  syncAllWellKnown,
+  SyncOptions as WellKnownSyncOptions,
+} from "./well-known-sync.js";
+import {
+  createWellKnownPollingManager,
+  PollingManager as WellKnownPollingManager,
+} from "./well-known-polling.js";
 
 /**
  * Subdirectories to check for skills within the configured directory.
@@ -80,12 +99,16 @@ interface DirectorySourceMap {
  * @param localDirs - Local skill directories
  * @param githubSpecs - GitHub repository specifications
  * @param cacheDir - GitHub cache directory path
+ * @param wellKnownSpecs - Well-known publisher specifications
+ * @param wellKnownCacheDir - Well-known cache directory path
  * @param bundledDir - Optional bundled skills directory
  */
 function buildDirectorySourceMap(
   localDirs: string[],
   githubSpecs: GitHubRepoSpec[],
   cacheDir: string,
+  wellKnownSpecs: WellKnownSpec[],
+  wellKnownCacheDir: string,
   bundledDir?: string
 ): DirectorySourceMap {
   const map: DirectorySourceMap = {};
@@ -121,6 +144,22 @@ function buildDirectorySourceMap(
     }
   }
 
+  // Map well-known publisher cache directories. The skills root used at
+  // discovery time is `<cachePath>/skills`, and each skill lives in its own
+  // subdirectory. Mark the skills root so discoverSkills() picks them up.
+  for (const spec of wellKnownSpecs) {
+    const cachePath = getWellKnownCachePath(spec, wellKnownCacheDir);
+    const skillsRoot = path.join(cachePath, "skills");
+    const source: SkillSource = {
+      type: "well-known",
+      displayName: getWellKnownDisplayName(spec),
+      prefix: getWellKnownPrefix(spec),
+      origin: spec.origin,
+    };
+    map[skillsRoot] = source;
+    map[cachePath] = source;
+  }
+
   // Map bundled skills directory
   if (bundledDir) {
     map[bundledDir] = BUNDLED_SKILL_SOURCE;
@@ -143,6 +182,11 @@ let currentSkillsDirs: string[] = [];
  * GitHub specs that are currently being polled.
  */
 let currentGithubSpecs: GitHubRepoSpec[] = [];
+
+/**
+ * Well-known publisher specs that are currently being polled.
+ */
+let currentWellKnownSpecs: WellKnownSpec[] = [];
 
 /**
  * Current directory-to-source map for skill discovery.
@@ -174,15 +218,18 @@ export function getStaticMode(): boolean {
 }
 
 /**
- * Classify paths as local directories or GitHub repositories.
- * GitHub URLs are detected by checking for "github.com" in the path.
+ * Classify paths as local directories, GitHub repositories, or well-known
+ * publishers. Detection order: GitHub URL → well-known URL → local path.
  */
 export function classifyPaths(paths: string[]): {
   localDirs: string[];
   githubSpecs: GitHubRepoSpec[];
+  wellKnownSpecs: WellKnownSpec[];
 } {
   const localDirs: string[] = [];
   const githubSpecs: GitHubRepoSpec[] = [];
+  const wellKnownSpecs: WellKnownSpec[] = [];
+  const wkConfig = getWellKnownConfig();
 
   for (const p of paths) {
     if (isGitHubUrl(p)) {
@@ -191,6 +238,13 @@ export function classifyPaths(paths: string[]): {
         githubSpecs.push(spec);
       } catch (error) {
         console.error(`Warning: Invalid GitHub URL "${p}": ${error}`);
+      }
+    } else if (isWellKnownUrl(p)) {
+      try {
+        const spec = parseWellKnownUrl(p, wkConfig.allowHttp);
+        wellKnownSpecs.push(spec);
+      } catch (error) {
+        console.error(`Warning: Invalid well-known URL "${p}": ${error}`);
       }
     } else {
       // Local directory - resolve the path
@@ -212,7 +266,20 @@ export function classifyPaths(paths: string[]): {
     return true;
   });
 
-  return { localDirs: uniqueLocalDirs, githubSpecs: uniqueGithubSpecs };
+  // Deduplicate well-known specs by origin + basePath
+  const seenWk = new Set<string>();
+  const uniqueWellKnownSpecs = wellKnownSpecs.filter((spec) => {
+    const key = `${spec.origin}${spec.basePath}`;
+    if (seenWk.has(key)) return false;
+    seenWk.add(key);
+    return true;
+  });
+
+  return {
+    localDirs: uniqueLocalDirs,
+    githubSpecs: uniqueGithubSpecs,
+    wellKnownSpecs: uniqueWellKnownSpecs,
+  };
 }
 
 /**
@@ -466,11 +533,14 @@ async function main() {
   // This returns paths that may include GitHub URLs
   const allPaths = getActiveDirectories();
 
-  // Classify paths as local or GitHub
-  const { localDirs, githubSpecs } = classifyPaths(allPaths);
+  // Classify paths as local, GitHub, or well-known
+  const { localDirs, githubSpecs, wellKnownSpecs } = classifyPaths(allPaths);
 
   // Get GitHub configuration
   const githubConfig = getGitHubConfig();
+
+  // Get well-known configuration
+  const wellKnownConfig = getWellKnownConfig();
 
   // Sync GitHub repositories
   let githubDirs: string[] = [];
@@ -512,19 +582,68 @@ async function main() {
     }
   }
 
+  // Sync well-known publishers
+  let wellKnownDirs: string[] = [];
+
+  if (wellKnownSpecs.length > 0) {
+    console.error(
+      `Well-known publishers: ${wellKnownSpecs.map((s) => getWellKnownDisplayName(s)).join(", ")}`
+    );
+
+    for (const spec of wellKnownSpecs) {
+      if (!isOriginAllowed(spec, wellKnownConfig)) {
+        console.error(
+          `Blocked: ${spec.origin} not in allowed origins. ` +
+            `Set WELL_KNOWN_ALLOWED_ORIGINS or wellKnownAllowedOrigins in config to permit.`
+        );
+        continue;
+      }
+      currentWellKnownSpecs.push(spec);
+    }
+
+    if (currentWellKnownSpecs.length > 0) {
+      console.error(`Syncing ${currentWellKnownSpecs.length} well-known publisher(s)...`);
+
+      const wkSyncOptions: WellKnownSyncOptions = {
+        cacheDir: wellKnownConfig.cacheDir,
+        maxArtifactBytes: wellKnownConfig.maxArtifactBytes,
+        maxUnpackedBytes: wellKnownConfig.maxUnpackedBytes,
+      };
+
+      const wkResults = await syncAllWellKnown(currentWellKnownSpecs, wkSyncOptions);
+
+      for (const result of wkResults) {
+        if (!result.error) {
+          wellKnownDirs.push(result.localPath);
+        }
+      }
+
+      console.error(
+        `Successfully synced ${wellKnownDirs.length}/${currentWellKnownSpecs.length} publisher(s)`
+      );
+    }
+  }
+
   // Get bundled skills directory (ships with the package)
   const bundledSkillsDir = getBundledSkillsDir();
   const hasBundledSkills = fs.existsSync(bundledSkillsDir);
 
   // Combine all skill directories
   // User directories come first so they can override bundled skills (first-wins deduplication)
-  currentSkillsDirs = [...localDirs, ...githubDirs, ...(hasBundledSkills ? [bundledSkillsDir] : [])];
+  currentSkillsDirs = [
+    ...localDirs,
+    ...githubDirs,
+    ...wellKnownDirs,
+    ...(hasBundledSkills ? [bundledSkillsDir] : []),
+  ];
 
   // Build source map for skill discovery
   currentSourceMap = buildDirectorySourceMap(
     localDirs,
     currentGithubSpecs,
     githubConfig.cacheDir,
+    currentWellKnownSpecs,
+    wellKnownConfig.cacheDir,
     hasBundledSkills ? bundledSkillsDir : undefined
   );
 
@@ -534,6 +653,9 @@ async function main() {
   }
   if (githubDirs.length > 0) {
     console.error(`GitHub cache directories: ${githubDirs.join(", ")}`);
+  }
+  if (wellKnownDirs.length > 0) {
+    console.error(`Well-known cache directories: ${wellKnownDirs.join(", ")}`);
   }
   if (hasBundledSkills) {
     console.error(`Bundled skills: ${bundledSkillsDir}`);
@@ -597,13 +719,18 @@ async function main() {
   // Skip in static mode since skills list is frozen
   if (!isStatic) {
     registerSkillConfigTool(server, skillState, async () => {
-      // Callback when directories or GitHub settings change via UI
-      // Reload directories from config and refresh skills
+      // Callback when directories or remote-source settings change via UI.
+      // Reload directories from config and refresh skills.
       const newPaths = getActiveDirectories();
-      const { localDirs: newLocalDirs, githubSpecs: newGithubSpecs } = classifyPaths(newPaths);
+      const {
+        localDirs: newLocalDirs,
+        githubSpecs: newGithubSpecs,
+        wellKnownSpecs: newWellKnownSpecs,
+      } = classifyPaths(newPaths);
 
-      // Get fresh GitHub config (in case allowed orgs/users changed)
+      // Get fresh configs (in case allowlists changed)
       const freshGithubConfig = getGitHubConfig();
+      const freshWellKnownConfig = getWellKnownConfig();
 
       // Filter GitHub specs by allowlist and sync
       const allowedGithubSpecs: GitHubRepoSpec[] = [];
@@ -615,7 +742,6 @@ async function main() {
         }
       }
 
-      // Sync any GitHub repos
       let newGithubDirs: string[] = [];
       if (allowedGithubSpecs.length > 0) {
         console.error(`Syncing ${allowedGithubSpecs.length} GitHub repo(s)...`);
@@ -633,15 +759,53 @@ async function main() {
         console.error(`Successfully synced ${newGithubDirs.length}/${allowedGithubSpecs.length} repo(s)`);
       }
 
+      // Filter well-known specs by allowlist and sync
+      const allowedWellKnownSpecs: WellKnownSpec[] = [];
+      for (const spec of newWellKnownSpecs) {
+        if (isOriginAllowed(spec, freshWellKnownConfig)) {
+          allowedWellKnownSpecs.push(spec);
+        } else {
+          console.error(`Blocked: ${spec.origin} not in allowed origins.`);
+        }
+      }
+
+      let newWellKnownDirs: string[] = [];
+      if (allowedWellKnownSpecs.length > 0) {
+        console.error(`Syncing ${allowedWellKnownSpecs.length} well-known publisher(s)...`);
+        const wkSyncOptions: WellKnownSyncOptions = {
+          cacheDir: freshWellKnownConfig.cacheDir,
+          maxArtifactBytes: freshWellKnownConfig.maxArtifactBytes,
+          maxUnpackedBytes: freshWellKnownConfig.maxUnpackedBytes,
+        };
+        const wkResults = await syncAllWellKnown(allowedWellKnownSpecs, wkSyncOptions);
+        for (const result of wkResults) {
+          if (!result.error) {
+            newWellKnownDirs.push(result.localPath);
+          }
+        }
+        console.error(
+          `Successfully synced ${newWellKnownDirs.length}/${allowedWellKnownSpecs.length} publisher(s)`
+        );
+      }
+
       // Update current state
       currentGithubSpecs = allowedGithubSpecs;
+      currentWellKnownSpecs = allowedWellKnownSpecs;
       githubDirs = newGithubDirs;
+      wellKnownDirs = newWellKnownDirs;
       // Include bundled skills (last, so user skills take precedence)
-      currentSkillsDirs = [...newLocalDirs, ...newGithubDirs, ...(hasBundledSkills ? [bundledSkillsDir] : [])];
+      currentSkillsDirs = [
+        ...newLocalDirs,
+        ...newGithubDirs,
+        ...newWellKnownDirs,
+        ...(hasBundledSkills ? [bundledSkillsDir] : []),
+      ];
       currentSourceMap = buildDirectorySourceMap(
         newLocalDirs,
         allowedGithubSpecs,
         freshGithubConfig.cacheDir,
+        allowedWellKnownSpecs,
+        freshWellKnownConfig.cacheDir,
         hasBundledSkills ? bundledSkillsDir : undefined
       );
 
@@ -684,6 +848,37 @@ async function main() {
     });
 
     pollingManager.start();
+  }
+
+  // Set up well-known polling for updates (skip in static mode)
+  let wellKnownPollingManager: WellKnownPollingManager | null = null;
+  if (
+    !isStatic &&
+    currentWellKnownSpecs.length > 0 &&
+    wellKnownConfig.pollIntervalMs > 0
+  ) {
+    const wkSyncOptions: WellKnownSyncOptions = {
+      cacheDir: wellKnownConfig.cacheDir,
+      maxArtifactBytes: wellKnownConfig.maxArtifactBytes,
+      maxUnpackedBytes: wellKnownConfig.maxUnpackedBytes,
+    };
+
+    wellKnownPollingManager = createWellKnownPollingManager(
+      currentWellKnownSpecs,
+      wkSyncOptions,
+      {
+        intervalMs: wellKnownConfig.pollIntervalMs,
+        onUpdate: (spec, _result) => {
+          console.error(`Well-known update detected for ${spec.origin}`);
+          refreshSkills(currentSkillsDirs, server, skillTool, promptRegistry, subscriptionManager);
+        },
+        onError: (spec, error) => {
+          console.error(`Well-known polling error for ${spec.origin}: ${error.message}`);
+        },
+      }
+    );
+
+    wellKnownPollingManager.start();
   }
 
   // Connect via stdio transport
