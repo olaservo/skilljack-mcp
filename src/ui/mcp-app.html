@@ -50,6 +50,21 @@
     <div class="empty-state small">No allowed orgs configured. GitHub repos are blocked until an org/user is added.</div>
   </div>
 
+  <!-- Well-Known Allowed Origins Section -->
+  <div class="section-header">
+    <div>
+      <h2>Well-Known Allowed Origins</h2>
+      <div class="section-hint">HTTPS origins allowed to publish skills via <code>/.well-known/agent-skills/</code></div>
+    </div>
+    <button class="add-btn add-origin-btn" id="add-origin-btn">
+      <span>+</span> Add Origin
+    </button>
+  </div>
+
+  <div id="allowed-origins-list" class="allowed-list">
+    <div class="empty-state small">No allowed origins configured. Well-known publishers are blocked until an origin is added.</div>
+  </div>
+
   <!-- Settings Section -->
   <div class="settings-section">
     <h2>Settings</h2>
@@ -82,6 +97,53 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" id="confirm-remove-org-cancel">Cancel</button>
         <button class="btn btn-danger" id="confirm-remove-org-btn">Remove</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm Remove Origin Modal -->
+  <div class="modal-overlay" id="confirm-remove-origin-modal">
+    <div class="modal modal-small">
+      <div class="modal-header">
+        <h2>Remove Allowed Origin</h2>
+        <button class="modal-close" id="confirm-remove-origin-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>Remove this origin from the allowed list?</p>
+        <p class="confirm-path" id="confirm-remove-origin-name"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="confirm-remove-origin-cancel">Cancel</button>
+        <button class="btn btn-danger" id="confirm-remove-origin-btn">Remove</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Origin Modal -->
+  <div class="modal-overlay" id="add-origin-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Add Allowed Well-Known Origin</h2>
+        <button class="modal-close" data-modal="add-origin-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="origin-name">Origin</label>
+          <input
+            type="text"
+            id="origin-name"
+            placeholder="https://example.com"
+          >
+          <div class="form-hint">
+            HTTPS origin (scheme + host + optional port) of a well-known publisher.
+            <br>You can paste a full URL — only the origin is stored.
+            <br>Examples: <code>https://example.com</code>, <code>https://skills.acme.org:8443</code>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-modal="add-origin-modal">Cancel</button>
+        <button class="btn btn-primary" id="add-origin-submit-btn">Add Origin</button>
       </div>
     </div>
   </div>

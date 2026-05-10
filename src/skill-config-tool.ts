@@ -28,11 +28,15 @@ import {
   getGitHubAllowedUsers,
   addGitHubAllowedOrg,
   removeGitHubAllowedOrg,
+  getWellKnownAllowedOrigins,
+  addWellKnownAllowedOrigin,
+  removeWellKnownAllowedOrigin,
   getStaticModeFromConfig,
   setStaticModeInConfig,
 } from "./skill-config.js";
 import { SkillState } from "./skill-tool.js";
 import { isGitHubUrl, parseGitHubUrl } from "./github-config.js";
+import { isWellKnownUrl, parseWellKnownUrl, getWellKnownConfig } from "./well-known-config.js";
 
 /**
  * Resource URI for the skill-config UI.
@@ -121,6 +125,21 @@ export function registerSkillConfigTool(
         } catch {
           // Invalid GitHub URL, count stays 0
         }
+      } else if (isWellKnownUrl(dir.path)) {
+        // For well-known directories, match by origin from skill source
+        try {
+          const spec = parseWellKnownUrl(dir.path, getWellKnownConfig().allowHttp);
+          for (const skill of skillState.skillMap.values()) {
+            if (
+              skill.source.type === "well-known" &&
+              skill.source.origin?.toLowerCase() === spec.origin.toLowerCase()
+            ) {
+              count++;
+            }
+          }
+        } catch {
+          // Invalid well-known URL, count stays 0
+        }
       } else {
         // For local directories, match by path prefix
         for (const skill of skillState.skillMap.values()) {
@@ -161,6 +180,7 @@ export function registerSkillConfigTool(
         staticMode: z.boolean(),
         allowedOrgs: z.array(z.string()),
         allowedUsers: z.array(z.string()),
+        allowedOrigins: z.array(z.string()),
       },
       _meta: { ui: { resourceUri: RESOURCE_URI } },
       annotations: {
@@ -188,6 +208,7 @@ export function registerSkillConfigTool(
           staticMode: getStaticModeFromConfig(),
           allowedOrgs: getGitHubAllowedOrgs(),
           allowedUsers: getGitHubAllowedUsers(),
+          allowedOrigins: getWellKnownAllowedOrigins(),
         },
       };
     }
@@ -251,6 +272,7 @@ export function registerSkillConfigTool(
             staticMode: getStaticModeFromConfig(),
             allowedOrgs: getGitHubAllowedOrgs(),
             allowedUsers: getGitHubAllowedUsers(),
+            allowedOrigins: getWellKnownAllowedOrigins(),
           },
         };
       } catch (error) {
@@ -330,6 +352,7 @@ export function registerSkillConfigTool(
             staticMode: getStaticModeFromConfig(),
             allowedOrgs: getGitHubAllowedOrgs(),
             allowedUsers: getGitHubAllowedUsers(),
+            allowedOrigins: getWellKnownAllowedOrigins(),
           },
         };
       } catch (error) {
@@ -403,6 +426,7 @@ export function registerSkillConfigTool(
             staticMode: getStaticModeFromConfig(),
             allowedOrgs: getGitHubAllowedOrgs(),
             allowedUsers: getGitHubAllowedUsers(),
+            allowedOrigins: getWellKnownAllowedOrigins(),
           },
         };
       } catch (error) {
@@ -477,6 +501,7 @@ export function registerSkillConfigTool(
             staticMode: getStaticModeFromConfig(),
             allowedOrgs: getGitHubAllowedOrgs(),
             allowedUsers: getGitHubAllowedUsers(),
+            allowedOrigins: getWellKnownAllowedOrigins(),
           },
         };
       } catch (error) {
@@ -491,6 +516,159 @@ export function registerSkillConfigTool(
           structuredContent: {
             success: false,
             allowedOrgs: getGitHubAllowedOrgs(),
+            error: message,
+          },
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // Add allowed well-known origin tool (UI-only)
+  registerAppTool(
+    server,
+    "skill-config-add-allowed-origin",
+    {
+      title: "Add Allowed Well-Known Origin",
+      description:
+        "Add an HTTPS origin (e.g. https://example.com) to the allowed list for well-known publishers.",
+      inputSchema: {
+        origin: z
+          .string()
+          .describe(
+            "Origin or full URL (e.g. https://example.com or https://example.com/.well-known/agent-skills/). Only the scheme + host[:port] is stored."
+          ),
+      },
+      outputSchema: {
+        success: z.boolean(),
+        allowedOrigins: z.array(z.string()),
+        error: z.string().optional(),
+      },
+      _meta: {
+        ui: {
+          resourceUri: RESOURCE_URI,
+          visibility: ["app"],
+        },
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args): Promise<CallToolResult> => {
+      const { origin: rawInput } = args as { origin: string };
+
+      try {
+        // Normalize: accept full URLs and reduce to origin only.
+        let normalizedOrigin: string;
+        try {
+          normalizedOrigin = new URL(rawInput).origin;
+        } catch {
+          throw new Error(
+            `Invalid origin: "${rawInput}". Use the form https://example.com[:port].`
+          );
+        }
+        if (
+          !normalizedOrigin.startsWith("https://") &&
+          !(normalizedOrigin.startsWith("http://") && getWellKnownConfig().allowHttp)
+        ) {
+          throw new Error(
+            `Origin must use https:// (or http:// with WELL_KNOWN_ALLOW_HTTP=1 for local dev).`
+          );
+        }
+
+        addWellKnownAllowedOrigin(normalizedOrigin);
+        await onDirectoriesChanged(); // Trigger well-known resync
+
+        const directories = getDirectoriesWithCounts();
+        return {
+          content: [
+            { type: "text", text: `Added allowed origin: ${normalizedOrigin}` },
+          ],
+          structuredContent: {
+            success: true,
+            directories,
+            activeSource: getConfigState().activeSource,
+            isOverridden: getConfigState().isOverridden,
+            staticMode: getStaticModeFromConfig(),
+            allowedOrgs: getGitHubAllowedOrgs(),
+            allowedUsers: getGitHubAllowedUsers(),
+            allowedOrigins: getWellKnownAllowedOrigins(),
+          },
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{ type: "text", text: `Failed to add allowed origin: ${message}` }],
+          structuredContent: {
+            success: false,
+            allowedOrigins: getWellKnownAllowedOrigins(),
+            error: message,
+          },
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // Remove allowed well-known origin tool (UI-only)
+  registerAppTool(
+    server,
+    "skill-config-remove-allowed-origin",
+    {
+      title: "Remove Allowed Well-Known Origin",
+      description: "Remove an HTTPS origin from the well-known allowed list.",
+      inputSchema: {
+        origin: z.string().describe("Origin to remove (exact match)"),
+      },
+      outputSchema: {
+        success: z.boolean(),
+        allowedOrigins: z.array(z.string()),
+        error: z.string().optional(),
+      },
+      _meta: {
+        ui: {
+          resourceUri: RESOURCE_URI,
+          visibility: ["app"],
+        },
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args): Promise<CallToolResult> => {
+      const { origin } = args as { origin: string };
+
+      try {
+        removeWellKnownAllowedOrigin(origin);
+        await onDirectoriesChanged(); // Trigger well-known resync
+
+        const directories = getDirectoriesWithCounts();
+        return {
+          content: [{ type: "text", text: `Removed allowed origin: ${origin}` }],
+          structuredContent: {
+            success: true,
+            directories,
+            activeSource: getConfigState().activeSource,
+            isOverridden: getConfigState().isOverridden,
+            staticMode: getStaticModeFromConfig(),
+            allowedOrgs: getGitHubAllowedOrgs(),
+            allowedUsers: getGitHubAllowedUsers(),
+            allowedOrigins: getWellKnownAllowedOrigins(),
+          },
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{ type: "text", text: `Failed to remove allowed origin: ${message}` }],
+          structuredContent: {
+            success: false,
+            allowedOrigins: getWellKnownAllowedOrigins(),
             error: message,
           },
           isError: true,

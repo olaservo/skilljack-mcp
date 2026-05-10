@@ -25,6 +25,7 @@ interface ConfigState {
   staticMode?: boolean;
   allowedOrgs?: string[];
   allowedUsers?: string[];
+  allowedOrigins?: string[];
   success?: boolean;
   error?: string;
 }
@@ -36,6 +37,7 @@ let isOverridden = false;
 let staticMode = false;
 let allowedOrgs: string[] = [];
 let allowedUsers: string[] = [];
+let allowedOrigins: string[] = [];
 let app: App | null = null;
 
 // DOM Elements
@@ -69,6 +71,7 @@ const confirmRemoveClose = document.getElementById("confirm-remove-close") as HT
 // Track pending removal
 let pendingRemovePath: string | null = null;
 let pendingRemoveOrg: string | null = null;
+let pendingRemoveOrigin: string | null = null;
 
 // Confirm remove org modal DOM elements
 const confirmRemoveOrgModal = document.getElementById("confirm-remove-org-modal")!;
@@ -76,6 +79,20 @@ const confirmRemoveOrgName = document.getElementById("confirm-remove-org-name")!
 const confirmRemoveOrgBtn = document.getElementById("confirm-remove-org-btn") as HTMLButtonElement;
 const confirmRemoveOrgCancel = document.getElementById("confirm-remove-org-cancel") as HTMLButtonElement;
 const confirmRemoveOrgClose = document.getElementById("confirm-remove-org-close") as HTMLButtonElement;
+
+// Allowed origins DOM elements
+const allowedOriginsList = document.getElementById("allowed-origins-list")!;
+const addOriginBtn = document.getElementById("add-origin-btn") as HTMLButtonElement;
+const addOriginModal = document.getElementById("add-origin-modal")!;
+const originNameInput = document.getElementById("origin-name") as HTMLInputElement;
+const addOriginSubmitBtn = document.getElementById("add-origin-submit-btn") as HTMLButtonElement;
+
+// Confirm remove origin modal DOM elements
+const confirmRemoveOriginModal = document.getElementById("confirm-remove-origin-modal")!;
+const confirmRemoveOriginName = document.getElementById("confirm-remove-origin-name")!;
+const confirmRemoveOriginBtn = document.getElementById("confirm-remove-origin-btn") as HTMLButtonElement;
+const confirmRemoveOriginCancel = document.getElementById("confirm-remove-origin-cancel") as HTMLButtonElement;
+const confirmRemoveOriginClose = document.getElementById("confirm-remove-origin-close") as HTMLButtonElement;
 
 // Handle host context changes
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -119,6 +136,9 @@ function updateState(data: ConfigState) {
   if (data.allowedUsers) {
     allowedUsers = data.allowedUsers;
   }
+  if (data.allowedOrigins) {
+    allowedOrigins = data.allowedOrigins;
+  }
 
   render();
 }
@@ -129,6 +149,7 @@ function render() {
   renderOverrideBanner();
   renderDirectories();
   renderAllowedOrgs();
+  renderAllowedOrigins();
   updateAddButton();
   renderStaticModeToggle();
 }
@@ -439,6 +460,118 @@ async function removeAllowedOrg(org: string) {
   }
 }
 
+// Render allowed origins list
+function renderAllowedOrigins() {
+  if (allowedOrigins.length === 0) {
+    allowedOriginsList.innerHTML = `
+      <div class="empty-state small">
+        No allowed origins configured. Well-known publishers are blocked until an origin is added.
+      </div>
+    `;
+    return;
+  }
+
+  allowedOriginsList.innerHTML = allowedOrigins
+    .map((origin) => `
+      <div class="allowed-item">
+        <span class="allowed-name">${escapeHtml(origin)}</span>
+        <button class="remove-origin-btn" data-origin="${escapeHtml(origin)}">Remove</button>
+      </div>
+    `)
+    .join("");
+
+  allowedOriginsList.querySelectorAll(".remove-origin-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const origin = (btn as HTMLButtonElement).dataset.origin;
+      if (origin) {
+        showConfirmRemoveOriginModal(origin);
+      }
+    });
+  });
+}
+
+// Add allowed origin
+async function addAllowedOrigin() {
+  const origin = originNameInput.value.trim();
+  if (!origin) {
+    showToast("Please enter an origin", "error");
+    return;
+  }
+
+  addOriginSubmitBtn.disabled = true;
+  addOriginSubmitBtn.textContent = "Adding...";
+
+  try {
+    const result = await app!.callServerTool({
+      name: "skill-config-add-allowed-origin",
+      arguments: { origin },
+    });
+
+    console.log("Add origin result:", result);
+
+    const structured = result.structuredContent as unknown as ConfigState;
+    if (structured?.success) {
+      updateState(structured);
+      closeOriginModal();
+      showToast(`Added allowed origin`, "success");
+    } else {
+      showToast(structured?.error || "Failed to add origin", "error");
+    }
+  } catch (error) {
+    console.error("Add origin error:", error);
+    showToast((error as Error).message || "Failed to add origin", "error");
+  } finally {
+    addOriginSubmitBtn.disabled = false;
+    addOriginSubmitBtn.textContent = "Add Origin";
+  }
+}
+
+// Show confirmation modal for removing an allowed origin
+function showConfirmRemoveOriginModal(origin: string) {
+  pendingRemoveOrigin = origin;
+  confirmRemoveOriginName.textContent = origin;
+  confirmRemoveOriginModal.classList.add("active");
+}
+
+function closeConfirmRemoveOriginModal() {
+  confirmRemoveOriginModal.classList.remove("active");
+  pendingRemoveOrigin = null;
+}
+
+// Remove allowed origin (called after confirmation)
+async function removeAllowedOrigin(origin: string) {
+  try {
+    const result = await app!.callServerTool({
+      name: "skill-config-remove-allowed-origin",
+      arguments: { origin },
+    });
+
+    console.log("Remove origin result:", result);
+
+    const structured = result.structuredContent as unknown as ConfigState;
+    if (structured?.success) {
+      updateState(structured);
+      showToast(`Removed allowed origin: ${origin}`, "success");
+    } else {
+      showToast(structured?.error || "Failed to remove origin", "error");
+    }
+  } catch (error) {
+    console.error("Remove origin error:", error);
+    showToast((error as Error).message || "Failed to remove origin", "error");
+  }
+}
+
+// Origin modal functions
+function showOriginModal() {
+  originNameInput.value = "";
+  addOriginModal.classList.add("active");
+  originNameInput.focus();
+}
+
+function closeOriginModal() {
+  addOriginModal.classList.remove("active");
+}
+
 // Org modal functions
 function showOrgModal() {
   orgNameInput.value = "";
@@ -525,6 +658,28 @@ orgNameInput.addEventListener("keydown", (e) => {
     addAllowedOrg();
   }
 });
+
+// Origin modal event listeners
+addOriginBtn.addEventListener("click", showOriginModal);
+addOriginModal.querySelector(".modal-close")?.addEventListener("click", closeOriginModal);
+addOriginModal.querySelector(".btn-secondary")?.addEventListener("click", closeOriginModal);
+addOriginSubmitBtn.addEventListener("click", addAllowedOrigin);
+originNameInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    addAllowedOrigin();
+  }
+});
+
+// Confirm remove origin modal event listeners
+confirmRemoveOriginBtn.addEventListener("click", async () => {
+  if (pendingRemoveOrigin) {
+    const origin = pendingRemoveOrigin;
+    closeConfirmRemoveOriginModal();
+    await removeAllowedOrigin(origin);
+  }
+});
+confirmRemoveOriginCancel.addEventListener("click", closeConfirmRemoveOriginModal);
+confirmRemoveOriginClose.addEventListener("click", closeConfirmRemoveOriginModal);
 
 // Static mode toggle event listener
 staticModeToggle?.addEventListener("change", (e) => {

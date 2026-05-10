@@ -314,7 +314,8 @@ h1 {
   font-family: 'Fira Code', 'Consolas', monospace;
 }
 
-.remove-org-btn {
+.remove-org-btn,
+.remove-origin-btn {
   padding: 2px 8px;
   background: transparent;
   color: var(--text-secondary);
@@ -324,7 +325,8 @@ h1 {
   cursor: pointer;
 }
 
-.remove-org-btn:hover {
+.remove-org-btn:hover,
+.remove-origin-btn:hover {
   background: var(--error);
   border-color: var(--error);
   color: white;
