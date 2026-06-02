@@ -111,7 +111,7 @@ The resource layer follows [SEP-2640 (Skills Extension)](https://github.com/mode
 | URI | Returns |
 |-----|---------|
 | `skill://<skill-path>/SKILL.md` | The skill's SKILL.md (`text/markdown`). Listed. |
-| `skill://<skill-path>/<file-path>` | A supporting file inside the skill directory. Not listed; template-resolvable. |
+| `skill://<skill-path>/<file-path>` | A supporting file inside the skill directory. Listed in `resources/list`, lower priority than `SKILL.md`. |
 | `skill://index.json` | SEP-2640 discovery index (`application/json`). Listed. |
 
 `<skill-path>` is `<prefix>/<baseName>` for prefixed skills (local: dir basename, GitHub: `owner-repo`) or just `<baseName>` for bundled. The final URI segment always equals the frontmatter `name` per SEP. Build/parse via `buildSkillResourceUri()` / `parseSkillResourceUri()` in `skill-discovery.ts`.

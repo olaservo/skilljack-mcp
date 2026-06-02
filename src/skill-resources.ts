@@ -4,7 +4,8 @@
  *
  * URI Scheme:
  *   skill://<skill-path>/SKILL.md   -> Each skill's SKILL.md (listed in resources/list)
- *   skill://<skill-path>/<file>     -> Individual files inside a skill (template-resolvable, not listed)
+ *   skill://<skill-path>/<file>     -> Individual files inside a skill (listed in
+ *                                      resources/list at lower priority than SKILL.md)
  *   skill://index.json              -> SEP-2640 discovery index (application/json)
  *
  * <skill-path> is computed by getSkillPath(): "<prefix>/<baseName>" for prefixed
@@ -24,7 +25,7 @@ import {
   buildSkillIndex,
   getSkillPath,
 } from "./skill-discovery.js";
-import { isPathWithinBase, MAX_FILE_SIZE, SkillState } from "./skill-tool.js";
+import { isPathWithinBase, listSkillFiles, MAX_FILE_SIZE, SkillState } from "./skill-tool.js";
 
 /**
  * Get MIME type based on file extension.
@@ -114,16 +115,45 @@ function registerSkillTemplate(
             resource.size = size;
           }
           resources.push(resource);
+
+          // List each supporting file as its own resource, below SKILL.md.
+          // Reuses the same enumeration as the skill-resource tool so listing
+          // and tool behavior stay consistent (symlinks/SKILL.md/node_modules/
+          // hidden dirs already filtered; recurses to MAX_DIRECTORY_DEPTH).
+          const skillDir = path.dirname(skill.path);
+          const fileAnnotations = getResourceAnnotations(skill, 0.3).annotations;
+          for (const file of listSkillFiles(skillDir)) {
+            const fileResource: Resource = {
+              uri: buildSkillResourceUri(skill, file),
+              name: `${skill.baseName}/${file}`,
+              mimeType: getMimeType(file),
+              description: `Supporting file in ${skill.baseName}`,
+              annotations: fileAnnotations,
+            };
+            try {
+              fileResource.size = fs.statSync(path.resolve(skillDir, file)).size;
+            } catch {
+              // Best-effort size; omit if the file can't be stat'd.
+            }
+            resources.push(fileResource);
+          }
         }
         return { resources };
       },
       complete: {
         skillUri: (value: string) => {
-          // Suggest <skill-path>/SKILL.md for each skill, filtered by substring.
+          // Suggest <skill-path>/SKILL.md plus each supporting file, filtered
+          // by substring, so completions match the listed resources.
           const v = value.toLowerCase();
-          return Array.from(skillState.skillMap.values())
-            .map((skill) => `${getSkillPath(skill)}/SKILL.md`)
-            .filter((u) => u.toLowerCase().includes(v));
+          const suggestions: string[] = [];
+          for (const skill of skillState.skillMap.values()) {
+            const base = getSkillPath(skill);
+            suggestions.push(`${base}/SKILL.md`);
+            for (const file of listSkillFiles(path.dirname(skill.path))) {
+              suggestions.push(`${base}/${file}`);
+            }
+          }
+          return suggestions.filter((u) => u.toLowerCase().includes(v));
         },
       },
     }),

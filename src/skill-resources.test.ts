@@ -5,6 +5,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { registerSkillResources } from "./skill-resources.js";
+import { resolveUriToFilePaths } from "./subscriptions.js";
 import { BUNDLED_SKILL_SOURCE } from "./skill-discovery.js";
 import {
   createTestSkill,
@@ -161,7 +162,7 @@ describe("SKILL.md resource (SEP-2640)", () => {
 });
 
 describe("supporting-file resource (SEP-2640)", () => {
-  it("does NOT list internal files in resources/list", async () => {
+  it("lists every supporting file in resources/list", async () => {
     const skillPath = path.join(FIXTURES_DIR, "with-resources", "SKILL.md");
 
     const client = await createConnectedClient([
@@ -174,10 +175,70 @@ describe("supporting-file resource (SEP-2640)", () => {
     ]);
 
     const result = await client.listResources();
-    const internal = result.resources.find((r) =>
-      r.uri.startsWith("skill://resourceful/scripts/")
+    const uris = result.resources.map((r) => r.uri);
+    // Includes a nested-subdir file, exercising listSkillFiles recursion.
+    expect(uris).toContain("skill://resourceful/scripts/example.py");
+    expect(uris).toContain("skill://resourceful/templates/config.json");
+  });
+
+  it("gives supporting files priority 0.3 (below SKILL.md 0.8, index 0.5)", async () => {
+    const skillPath = path.join(FIXTURES_DIR, "with-resources", "SKILL.md");
+
+    const client = await createConnectedClient([
+      createTestSkill({
+        name: "resourceful",
+        baseName: "resourceful",
+        path: skillPath,
+        source: BUNDLED_SKILL_SOURCE,
+        effectiveAssistantInvocable: true,
+        effectiveUserInvocable: false,
+      }),
+    ]);
+
+    const result = await client.listResources();
+    const md = result.resources.find((r) => r.uri === "skill://resourceful/SKILL.md");
+    const script = result.resources.find(
+      (r) => r.uri === "skill://resourceful/scripts/example.py"
     );
-    expect(internal).toBeUndefined();
+    const index = result.resources.find((r) => r.uri === "skill://index.json");
+
+    expect(md!.annotations?.priority).toBe(0.8);
+    expect(index!.annotations?.priority).toBe(0.5);
+    expect(script!.annotations?.priority).toBe(0.3);
+    // audience inherited from the owning skill
+    expect(script!.annotations?.audience).toEqual(["assistant"]);
+  });
+
+  it("sets correct mimeType and best-effort size on listed files", async () => {
+    const skillPath = path.join(FIXTURES_DIR, "with-resources", "SKILL.md");
+    const scriptAbs = path.join(
+      FIXTURES_DIR,
+      "with-resources",
+      "scripts",
+      "example.py"
+    );
+    const expectedSize = fs.statSync(scriptAbs).size;
+
+    const client = await createConnectedClient([
+      createTestSkill({
+        name: "resourceful",
+        baseName: "resourceful",
+        path: skillPath,
+        source: BUNDLED_SKILL_SOURCE,
+      }),
+    ]);
+
+    const result = await client.listResources();
+    const script = result.resources.find(
+      (r) => r.uri === "skill://resourceful/scripts/example.py"
+    );
+    const config = result.resources.find(
+      (r) => r.uri === "skill://resourceful/templates/config.json"
+    );
+
+    expect(script!.mimeType).toBe("text/x-python");
+    expect(script!.size).toBe(expectedSize);
+    expect(config!.mimeType).toBe("application/json");
   });
 
   it("returns file content on resources/read at skill://<path>/<file>", async () => {
@@ -239,6 +300,30 @@ describe("supporting-file resource (SEP-2640)", () => {
     await expect(
       client.readResource({ uri: "skill://resourceful/nope.txt" })
     ).rejects.toThrow();
+  });
+
+  it("resolves a listed file URI to its concrete file path (subscribable)", () => {
+    const skillPath = path.join(FIXTURES_DIR, "with-resources", "SKILL.md");
+    const scriptAbs = path.join(
+      FIXTURES_DIR,
+      "with-resources",
+      "scripts",
+      "example.py"
+    );
+    const state = createTestSkillState([
+      createTestSkill({
+        name: "resourceful",
+        baseName: "resourceful",
+        path: skillPath,
+        source: BUNDLED_SKILL_SOURCE,
+      }),
+    ]);
+
+    const paths = resolveUriToFilePaths(
+      "skill://resourceful/scripts/example.py",
+      state
+    );
+    expect(paths).toContain(path.resolve(scriptAbs));
   });
 });
 

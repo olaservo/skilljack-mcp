@@ -271,7 +271,7 @@ Skills are also accessible via MCP [Resources](https://modelcontextprotocol.io/s
 | URI | Returns |
 |-----|---------|
 | `skill://<skill-path>/SKILL.md` | The skill's `SKILL.md` (`text/markdown`). Listed in `resources/list`. |
-| `skill://<skill-path>/<file-path>` | A supporting file inside the skill directory. Template-resolvable; not listed. |
+| `skill://<skill-path>/<file-path>` | A supporting file inside the skill directory. Listed in `resources/list` at lower priority than `SKILL.md`. |
 | `skill://index.json` | SEP-2640 discovery index (`application/json`). Listed in `resources/list`. |
 
 `<skill-path>` is `<prefix>/<baseName>` for prefixed skills (the prefix segments come from the skill's source — e.g., a local directory basename or `owner-repo` for GitHub-sourced skills) or just `<baseName>` for bundled skills. The final `<skill-path>` segment always matches the `name` field in the skill's frontmatter, per SEP.
