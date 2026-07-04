@@ -23,9 +23,11 @@ import {
   buildSkillResourceUri,
   parseSkillResourceUri,
   buildSkillIndex,
-  getSkillPath,
 } from "./skill-discovery.js";
 import { isPathWithinBase, listSkillFiles, MAX_FILE_SIZE, SkillState } from "./skill-tool.js";
+
+/** URI scheme prefix for skill resources. */
+const SCHEME = "skill://";
 
 /**
  * Get MIME type based on file extension.
@@ -121,19 +123,24 @@ function registerSkillTemplate(
           // and tool behavior stay consistent (symlinks/SKILL.md/node_modules/
           // hidden dirs already filtered; recurses to MAX_DIRECTORY_DEPTH).
           const skillDir = path.dirname(skill.path);
-          const fileAnnotations = getResourceAnnotations(skill, 0.3).annotations;
+          // audience/priority are skill-level; lastModified/size must come from
+          // each file's own stat (not SKILL.md's), so build fresh per-file
+          // annotations rather than sharing one object.
+          const { audience, priority } = getResourceAnnotations(skill, 0.3).annotations;
           for (const file of listSkillFiles(skillDir)) {
             const fileResource: Resource = {
               uri: buildSkillResourceUri(skill, file),
               name: `${skill.baseName}/${file}`,
               mimeType: getMimeType(file),
               description: `Supporting file in ${skill.baseName}`,
-              annotations: fileAnnotations,
+              annotations: { audience, priority },
             };
             try {
-              fileResource.size = fs.statSync(path.resolve(skillDir, file)).size;
+              const stat = fs.statSync(path.resolve(skillDir, file));
+              fileResource.size = stat.size;
+              fileResource.annotations!.lastModified = stat.mtime.toISOString();
             } catch {
-              // Best-effort size; omit if the file can't be stat'd.
+              // Best-effort size/lastModified; omit if the file can't be stat'd.
             }
             resources.push(fileResource);
           }
@@ -143,14 +150,15 @@ function registerSkillTemplate(
       complete: {
         skillUri: (value: string) => {
           // Suggest <skill-path>/SKILL.md plus each supporting file, filtered
-          // by substring, so completions match the listed resources.
+          // by substring. Strip the "skill://" scheme from the built URI so the
+          // suggested {+skillUri} value is per-segment encoded exactly like the
+          // listed resources (names with spaces/reserved chars stay in sync).
           const v = value.toLowerCase();
           const suggestions: string[] = [];
           for (const skill of skillState.skillMap.values()) {
-            const base = getSkillPath(skill);
-            suggestions.push(`${base}/SKILL.md`);
+            suggestions.push(buildSkillResourceUri(skill, "SKILL.md").slice(SCHEME.length));
             for (const file of listSkillFiles(path.dirname(skill.path))) {
-              suggestions.push(`${base}/${file}`);
+              suggestions.push(buildSkillResourceUri(skill, file).slice(SCHEME.length));
             }
           }
           return suggestions.filter((u) => u.toLowerCase().includes(v));

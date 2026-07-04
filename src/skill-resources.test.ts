@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -14,6 +15,20 @@ import {
 } from "./__test-helpers__/helpers.js";
 
 const FIXTURES_DIR = path.resolve(__dirname, "__fixtures__", "skills");
+
+/**
+ * Create a throwaway skill directory on disk (dotfiles/mtimes can't be committed
+ * as fixtures — .env is gitignored). Returns the path to its SKILL.md.
+ */
+function makeTempSkill(files: Record<string, string>): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljack-res-"));
+  for (const [rel, content] of Object.entries(files)) {
+    const abs = path.join(dir, rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, content);
+  }
+  return path.join(dir, "SKILL.md");
+}
 
 async function createConnectedClient(
   skills: ReturnType<typeof createTestSkill>[]
@@ -324,6 +339,60 @@ describe("supporting-file resource (SEP-2640)", () => {
       state
     );
     expect(paths).toContain(path.resolve(scriptAbs));
+  });
+
+  it("does not list hidden files (e.g. .env) in resources/list", async () => {
+    const skillPath = makeTempSkill({
+      "SKILL.md": "---\nname: secretful\ndescription: has secrets\n---\n# body",
+      ".env": "API_KEY=supersecret",
+      "notes.txt": "safe to share",
+    });
+
+    const client = await createConnectedClient([
+      createTestSkill({
+        name: "secretful",
+        baseName: "secretful",
+        path: skillPath,
+        source: BUNDLED_SKILL_SOURCE,
+      }),
+    ]);
+
+    const uris = (await client.listResources()).resources.map((r) => r.uri);
+    // Normal supporting file is listed; the dotfile is not.
+    expect(uris).toContain("skill://secretful/notes.txt");
+    expect(uris.some((u) => u.includes(".env"))).toBe(false);
+  });
+
+  it("reports each supporting file's own lastModified, not SKILL.md's", async () => {
+    const skillPath = makeTempSkill({
+      "SKILL.md": "---\nname: dated\ndescription: x\n---\n# body",
+      "scripts/a.py": "print('hi')",
+    });
+    const fileAbs = path.join(path.dirname(skillPath), "scripts", "a.py");
+    // Force distinct mtimes: SKILL.md old, supporting file newer.
+    const oldTime = new Date("2020-01-01T00:00:00.000Z");
+    const newTime = new Date("2026-07-04T00:00:00.000Z");
+    fs.utimesSync(skillPath, oldTime, oldTime);
+    fs.utimesSync(fileAbs, newTime, newTime);
+
+    const client = await createConnectedClient([
+      createTestSkill({
+        name: "dated",
+        baseName: "dated",
+        path: skillPath,
+        source: BUNDLED_SKILL_SOURCE,
+      }),
+    ]);
+
+    const result = await client.listResources();
+    const md = result.resources.find((r) => r.uri === "skill://dated/SKILL.md");
+    const file = result.resources.find(
+      (r) => r.uri === "skill://dated/scripts/a.py"
+    );
+
+    expect(md!.annotations?.lastModified).toBe(oldTime.toISOString());
+    // The file's timestamp must reflect the file itself, not SKILL.md.
+    expect(file!.annotations?.lastModified).toBe(newTime.toISOString());
   });
 });
 

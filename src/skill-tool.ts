@@ -200,8 +200,14 @@ export function listSkillFiles(skillDir: string, subPath: string = "", depth: nu
         files.push(...listSkillFiles(skillDir, relativePath, depth + 1));
       }
     } else {
-      // Skip SKILL.md (use skill tool for that) and common non-resource files
-      if (entry.name !== "SKILL.md" && entry.name !== "skill.md") {
+      // Skip SKILL.md (use skill tool for that), and hidden files (e.g. .env,
+      // .npmrc) so secrets sitting in a skill dir are never enumerated into
+      // resources/list or surfaced by the skill-resource tool.
+      if (
+        !entry.name.startsWith(".") &&
+        entry.name !== "SKILL.md" &&
+        entry.name !== "skill.md"
+      ) {
         files.push(relativePath.replace(/\\/g, "/"));
       }
     }
