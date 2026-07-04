@@ -2,9 +2,12 @@
 
 ## Commands
 
-- `npm run build` - Compile TypeScript to dist/
+- `npm run build` - Compile TypeScript to dist/ (Vite UI build + `tsc`)
 - `npm run dev` - Watch mode (tsx)
+- `npm test` - Run the vitest suite
 - `npm run inspector` - Test with MCP Inspector
+
+CI (`.github/workflows/ci.yml`) runs `npm ci`, `npm run build`, and `npm test` on Node 20 for every push to `main` and every PR.
 
 ## Configuration
 
@@ -26,19 +29,26 @@
 
 ```
 src/
-├── index.ts             # Entry point, server setup, file watching, stdio transport
-├── skill-discovery.ts   # YAML frontmatter parsing, XML generation
-├── skill-tool.ts        # MCP tools: skill, skill-resource
-├── skill-prompts.ts     # MCP Prompts: /skill with auto-completion, per-skill prompts
-├── skill-resources.ts   # MCP Resources: SEP-2640 skill:// URI scheme + skill://index.json
-├── subscriptions.ts     # File watching, resource subscriptions
-├── github-config.ts     # GitHub URL detection, parsing, allowlist
-├── github-sync.ts       # Clone/pull GitHub repos into the cache
-├── github-polling.ts    # Periodic GitHub update checks
-├── well-known-config.ts # Well-known URL detection, parsing, allowlist
-├── well-known-sync.ts   # Fetch + verify (SHA-256) + safely extract publisher artifacts
-└── well-known-polling.ts # Periodic well-known index re-fetch (ETag/If-None-Match)
+├── index.ts               # Entry point, server setup, file watching, stdio transport
+├── skill-discovery.ts     # YAML frontmatter parsing, XML generation
+├── skill-tool.ts          # MCP tools: load-skill, skill-resource
+├── skill-prompts.ts       # MCP Prompts: /skill with auto-completion, per-skill prompts
+├── skill-resources.ts     # MCP Resources: SEP-2640 skill:// URI scheme + skill://index.json
+├── subscriptions.ts       # File watching, resource subscriptions
+├── skill-config.ts        # Directory/override config (~/.skilljack/config.json)
+├── skill-config-tool.ts   # MCP tools backing the config UI (skill-config-*)
+├── skill-display-tool.ts  # MCP tools backing the skills display UI (skill-display-*)
+├── github-config.ts       # GitHub URL detection, parsing, allowlist
+├── github-sync.ts         # Clone/pull GitHub repos into the cache
+├── github-polling.ts      # Periodic GitHub update checks
+├── well-known-config.ts   # Well-known URL detection, parsing, allowlist, URL validation
+├── well-known-sync.ts     # Fetch + verify (SHA-256) + safely extract publisher artifacts
+├── well-known-polling.ts  # Periodic well-known index re-fetch (ETag/If-None-Match)
+├── types/                 # Ambient type declarations (e.g. yauzl-promise)
+└── ui/                    # MCP Apps UI (mcp-app.ts, skill-display.ts) built by Vite
 ```
+
+Packaging: `manifest.json` + `.mcpbignore` define the `.mcpb` bundle (MCP Bundle) for distribution.
 
 ## Key Abstractions
 
@@ -107,6 +117,7 @@ WELL_KNOWN_ALLOWED_ORIGINS=https://example.com \
 ```
 
 - **Default-deny**: origins must be on the allowlist (env var or `wellKnownAllowedOrigins` in `~/.skilljack/config.json`).
+- **Every fetched URL is allowlist-gated**: `assertUrlAllowed()` re-validates the index URL, each entry's artifact `url` (which may be absolute/cross-origin), and every redirect target against the allowlist + scheme rules. Redirects are followed manually (`redirect: "manual"`, max 5 hops) so a `3xx` can't escape the allowlist after the initial check. This prevents an allowlisted-but-malicious publisher from pointing an artifact at an internal host (SSRF) or an off-allowlist CDN.
 - **Digest verification**: every artifact byte stream is SHA-256-hashed and compared against the index entry's `digest` (`sha256:<64 hex>`). Mismatch → entry is rejected and not written to disk.
 - **Archive safety**: `.tar.gz` (via `tar`) and `.zip` (via `yauzl-promise`) are extracted with rejection of absolute paths, parent traversal (`..`), symlinks/hardlinks, and uncompressed sizes over `WELL_KNOWN_MAX_UNPACKED_MB`.
 - **Cache layout**: `~/.skilljack/well-known-cache/<host-slug>[_<path-slug>]/skills/<skill-name>/SKILL.md`. The `skills/` root is added to `currentSkillsDirs` so `discoverSkills()` picks them up like any local source.
@@ -168,6 +179,7 @@ The resource layer follows [SEP-2640 (Skills Extension)](https://github.com/mode
 
 ## Testing
 
-- Tests can be executed using the MCP Inspector and Playwright MCP.
+- **Automated:** `npm test` runs the vitest suite (`src/**/*.test.ts`), which CI also runs on every push/PR. Add unit tests alongside the code they cover.
+- Interactive/manual testing can also be done with the MCP Inspector and Playwright MCP.
 - Check for a `TEST_PLAN.md` for test cases.  If no test plan exists create a set of test scenarios in a file called `TEST_PLAN.md`
 - Once testing is complete, always clean up the `TEST_PLAN.md` file and any generated or test files.

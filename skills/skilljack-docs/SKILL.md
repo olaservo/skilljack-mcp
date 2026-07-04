@@ -12,8 +12,9 @@ An MCP server that jacks [Agent Skills](https://agentskills.io) directly into yo
 ## Features
 
 - **Dynamic Skill Discovery** - Watches skill directories and automatically refreshes when skills change
+- **Multiple Sources** - Local directories, GitHub repositories, and `.well-known/agent-skills/` publishers (both allowlisted)
 - **Tool List Changed Notifications** - Sends `tools/listChanged` so clients can refresh available skills
-- **Skill Tool** - Load full skill content on demand (progressive disclosure)
+- **`load-skill` Tool** - Load full skill content on demand (progressive disclosure)
 - **MCP Prompts** - Load skills via `/skill` prompt with auto-completion or per-skill prompts
 - **MCP Resources** - Access skills via `skill://` URIs aligned with [SEP-2640](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640)
 - **Resource Subscriptions** - Real-time file watching with `notifications/resources/updated`
@@ -24,7 +25,7 @@ An MCP server that jacks [Agent Skills](https://agentskills.io) directly into yo
 This server demonstrates a way to approach integrating skills using existing MCP primitives.
 
 MCP already has the building blocks:
-- **Tools** for on-demand skill loading (the `skill` tool with dynamically updated descriptions)
+- **Tools** for on-demand skill loading (the `load-skill` tool with dynamically updated descriptions)
 - **Resources** for explicit skill access (`skill://` URIs)
 - **Notifications** for real-time updates (`tools/listChanged`, `resources/updated`)
 - **Prompts** for explicitly invoking skills by name (`/my-server-skill`)
@@ -49,6 +50,25 @@ SKILLS_DIR=/path/to/skills,/path/to/more/skills skilljack-mcp
 ```
 
 Each directory is scanned along with its `.claude/skills/` and `skills/` subdirectories for skills. Duplicate skill names are handled by keeping the first occurrence.
+
+### Remote Sources
+
+In addition to local directories, skills can be pulled from two kinds of remote sources. Both are **default-deny** — a remote source is only synced if its origin is on the corresponding allowlist.
+
+```bash
+# GitHub repository (allowlisted via GITHUB_ALLOWED_ORGS / GITHUB_ALLOWED_USERS)
+GITHUB_ALLOWED_ORGS=acme skilljack-mcp github.com/acme/skills
+
+# Well-known publisher serving /.well-known/agent-skills/index.json
+# (allowlisted via WELL_KNOWN_ALLOWED_ORIGINS)
+WELL_KNOWN_ALLOWED_ORIGINS=https://example.com \
+  skilljack-mcp https://example.com/.well-known/agent-skills/
+```
+
+- **GitHub** repos are cloned into a local cache and polled for updates; skills are namespaced with an `owner-repo` prefix.
+- **Well-known publishers** serve a discovery index (per the [agent-skills discovery RFC](https://github.com/cloudflare/agent-skills-discovery-rfc)). Every artifact is **SHA-256-verified** against the index before it is written, archives (`.tar.gz`/`.zip`) are extracted with path-traversal/symlink/size protections, and **every fetched URL — index, artifact, and any redirect target — must be on `WELL_KNOWN_ALLOWED_ORIGINS`** (so a separate CDN origin must be allowlisted too). See the [Developer Guide](https://github.com/olaservo/skilljack-mcp/blob/main/CLAUDE.md) for the full list of `WELL_KNOWN_*` tuning env vars.
+
+Sources can be mixed freely on one command line (local dirs, GitHub URLs, and well-known URLs together).
 
 ### Static Mode
 
@@ -100,20 +120,20 @@ View all available skills and customize their invocation settings through the sk
 
 The UI displays:
 - All discovered skills with name, description, and file path
-- **Source indicators** showing whether each skill is from a local directory or GitHub repository
+- **Source indicators** showing whether each skill is from a local directory, a GitHub repository, or a well-known publisher
 - **Invocation toggles** to enable/disable Assistant (model auto-invoke) and User (prompts menu) visibility
 - **Customized badge** when settings differ from frontmatter defaults
 
-Skills from GitHub repositories show the org/repo name (e.g., `modelcontextprotocol/ext-apps`), making it easy to identify where each skill originates.
+Skills from GitHub repositories show the org/repo name (e.g., `modelcontextprotocol/ext-apps`), and well-known skills show the publisher origin, making it easy to identify where each skill originates.
 
 ## How It Works
 
 The server implements the [Agent Skills](https://agentskills.io) progressive disclosure pattern with dynamic updates:
 
 1. **At startup**: Discovers skills from configured directories and starts file watchers
-2. **On connection**: Skill tool description includes available skills metadata
+2. **On connection**: `load-skill` tool description includes available skills metadata
 3. **On file change**: Re-discovers skills, updates tool description, sends `tools/listChanged`
-4. **On tool call**: Agent calls `skill` tool to load full SKILL.md content
+4. **On tool call**: Agent calls `load-skill` tool to load full SKILL.md content
 5. **As needed**: Agent calls `skill-resource` to load additional files
 
 ```
@@ -123,21 +143,21 @@ The server implements the [Agent Skills](https://agentskills.io) progressive dis
 │   • Starts watching for SKILL.md changes                 │
 │   ↓                                                      │
 │ MCP Client connects                                      │
-│   • Skill tool description includes available skills     │
+│   • load-skill tool description includes available skills│
 │   • Prompts registered for each skill                    │
 │   ↓                                                      │
 │ LLM sees skill metadata in tool description              │
 │   ↓                                                      │
 │ SKILL.md added/modified/removed                          │
 │   • Server re-discovers skills                           │
-│   • Updates skill tool description                       │
+│   • Updates load-skill tool description                  │
 │   • Updates prompt list (add/remove/modify)              │
 │   • Sends tools/listChanged notification                 │
 │   • Sends prompts/listChanged notification               │
 │   • Client refreshes tool and prompt definitions         │
 │   ↓                                                      │
 │ User invokes /skill prompt or /skill-name prompt         │
-│   OR LLM calls "skill" tool with skill name              │
+│   OR LLM calls "load-skill" tool with skill name         │
 │   ↓                                                      │
 │ Server returns full SKILL.md content                     │
 │   ↓                                                      │
@@ -150,7 +170,7 @@ The server implements the [Agent Skills](https://agentskills.io) progressive dis
 
 This server exposes skills via **tools**, **resources**, and **prompts**:
 
-- **Tools** (`skill`, `skill-resource`) - For your agent to use autonomously. The LLM sees available skills in the tool description and calls them as needed.
+- **Tools** (`load-skill`, `skill-resource`) - For your agent to use autonomously. The LLM sees available skills in the tool description and calls them as needed.
 - **Prompts** (`/skill`, `/skill-name`) - For explicit user invocation. Use `/skill` with auto-completion or select a skill directly by name.
 - **Resources** (`skill://` URIs) - For manual selection in apps that support it (e.g., Claude Desktop's resource picker). Useful when you want to explicitly attach a skill to the conversation.
 
@@ -168,25 +188,29 @@ This server implements the [Agent Skills progressive disclosure pattern](https:/
 
 ### How it works
 
-1. **Discovery** - Server loads metadata from all skills into the `skill` tool description
+1. **Discovery** - Server loads metadata from all skills into the `load-skill` tool description
 2. **Activation** - When a skill is loaded (via tool, prompt, or resource), only the SKILL.md content is returned
 3. **Execution** - SKILL.md references additional files; agent fetches them with `skill-resource` as needed
 
 ### Why SKILL.md documents its own resources
 
-The server doesn't automatically list all files in a skill directory. Instead, skill authors document available resources directly in their SKILL.md (e.g., "Copy the template from `templates/server.ts`"). This design choice follows the spec because:
+The `load-skill` tool description and the loaded SKILL.md body don't enumerate every file in a skill directory. Instead, skill authors document available resources directly in their SKILL.md (e.g., "Copy the template from `templates/server.ts`"). This design choice follows the spec because:
 
 - **Skill authors know best** - They decide which files are relevant and when to use them
 - **Context efficiency** - Loading everything upfront wastes tokens on files the agent may not need
 - **Natural flow** - SKILL.md guides the agent through resources in a logical order
 
+(Supporting files *are* enumerated in `resources/list` for clients that browse resources — see [Resources](#resources) — but at lower priority than `SKILL.md`, and the progressive-disclosure tool/prompt path above still loads only what the SKILL.md points to.)
+
 **For skill authors:** Reference files using relative paths from the skill root (e.g., `snippets/tool.ts`, `references/api.md`). Keep your main SKILL.md under 500 lines; move detailed reference material to separate files. See the [Agent Skills specification](https://agentskills.io/specification) for complete authoring guidelines.
 
 ## Tools
 
-### `skill`
+### `load-skill`
 
 Load and activate an Agent Skill by name. Returns the full SKILL.md content.
+
+> Named `load-skill` (not `skill`) to avoid colliding with clients that ship a built-in `Skill` tool (e.g. Claude Code); a distinct verb-first name removes the routing ambiguity. The user-facing *prompt* is still `/skill`.
 
 **Input:**
 ```json
@@ -326,14 +350,14 @@ Not protected against:
 The server watches skill directories for changes. When SKILL.md files are added, modified, or removed:
 
 1. Skills are re-discovered from all configured directories
-2. The `skill` tool's description is updated with current skill names and metadata
+2. The `load-skill` tool's description is updated with current skill names and metadata
 3. Per-skill prompts are added, removed, or updated accordingly
 4. `tools/listChanged` and `prompts/listChanged` notifications are sent to connected clients
 5. Clients that support these notifications will refresh tool and prompt definitions
 
 ## Skill Metadata Format
 
-The `skill` tool description includes metadata for all available skills in XML format:
+The `load-skill` tool description includes metadata for all available skills in XML format:
 
 ```markdown
 # Skills
