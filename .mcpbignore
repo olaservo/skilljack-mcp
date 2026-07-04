@@ -1,0 +1,11 @@
+# Skilljack MCP - MCPB ignore patterns
+
+# Evaluation files
+evals/
+
+# Claude config (dev only)
+CLAUDE.md
+.mcp.json
+
+# Source files (dist is enough)
+src/

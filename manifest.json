@@ -1,0 +1,46 @@
+{
+  "manifest_version": "0.3",
+  "name": "skilljack-mcp",
+  "display_name": "Skilljack MCP Server",
+  "version": "0.11.0",
+  "description": "MCP server that discovers and serves Agent Skills. I know kung fu.",
+  "author": {
+    "name": "Ola Hungerford",
+    "url": "https://github.com/olaservo"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/olaservo/skilljack-mcp.git"
+  },
+  "homepage": "https://github.com/olaservo/skilljack-mcp#readme",
+  "license": "MIT",
+  "keywords": ["mcp", "model-context-protocol", "agent-skills", "claude", "ai"],
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${EXTENSION_DIR}/dist/index.js", "${user_config.skills_path}"]
+    }
+  },
+  "tools": [
+    { "name": "load-skill", "description": "Load a skill's full instructions on demand" },
+    { "name": "skill-resource", "description": "Read files referenced by skill instructions (scripts, snippets, templates)" },
+    { "name": "skill-config", "description": "View and manage skill directory and source configuration" },
+    { "name": "skill-display", "description": "Open the skills management UI" }
+  ],
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  },
+  "user_config": {
+    "skills_path": {
+      "type": "directory",
+      "title": "Skills Directory",
+      "description": "Path to the directory containing your agent skills",
+      "required": true
+    }
+  }
+}
