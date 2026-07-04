@@ -145,6 +145,51 @@ export function isOriginAllowed(spec: WellKnownSpec, config: WellKnownConfig): b
 }
 
 /**
+ * Validate that an arbitrary URL is safe to fetch: it must use an allowed
+ * scheme (https, or http only when allowHttp is set) and its origin must be on
+ * the allowlist. Throws with a descriptive message otherwise, returning the
+ * parsed URL on success.
+ *
+ * This is the trust boundary for every network request the well-known source
+ * makes — not just the configured index origin, but each skill entry's artifact
+ * `url` and any redirect target. Without it, an allowlisted-but-malicious
+ * publisher could point `url` at an internal endpoint (SSRF) or an off-allowlist
+ * host, bypassing both the origin allowlist and the http scheme gate.
+ */
+export function assertUrlAllowed(
+  rawUrl: string,
+  config: Pick<WellKnownConfig, "allowedOrigins" | "allowHttp">,
+  label = "URL"
+): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error(`${label} is not a valid absolute URL: "${rawUrl}"`);
+  }
+
+  const isHttps = parsed.protocol === "https:";
+  const isAllowedHttp = config.allowHttp && parsed.protocol === "http:";
+  if (!isHttps && !isAllowedHttp) {
+    throw new Error(
+      `${label} uses disallowed scheme "${parsed.protocol}": ${rawUrl}`
+    );
+  }
+
+  const origin = `${parsed.protocol}//${parsed.host}`;
+  const allowed = config.allowedOrigins.some(
+    (o) => o.toLowerCase() === origin.toLowerCase()
+  );
+  if (!allowed) {
+    throw new Error(
+      `${label} origin "${origin}" is not in WELL_KNOWN_ALLOWED_ORIGINS: ${rawUrl}`
+    );
+  }
+
+  return parsed;
+}
+
+/**
  * Parse a comma-separated list from an environment variable.
  */
 function parseCommaList(envValue: string | undefined): string[] {
@@ -181,12 +226,21 @@ function loadAllowedOriginsFromConfig(): string[] {
 }
 
 /**
- * Parse a positive integer environment variable, falling back to a default.
+ * Parse a non-negative integer environment variable, falling back to a default.
+ *
+ * `minValue` sets the smallest accepted value: size caps pass `1` so that
+ * `WELL_KNOWN_MAX_ARTIFACT_MB=0` (a 0-byte cap that would fail every fetch)
+ * falls back to the default instead of silently disabling the feature. The
+ * poll interval keeps `minValue = 0`, where `0` meaningfully disables polling.
  */
-function parseIntEnv(value: string | undefined, fallback: number): number {
+function parseIntEnv(
+  value: string | undefined,
+  fallback: number,
+  minValue = 0
+): number {
   if (value === undefined) return fallback;
   const parsed = parseInt(value, 10);
-  if (Number.isNaN(parsed) || parsed < 0) return fallback;
+  if (Number.isNaN(parsed) || parsed < minValue) return fallback;
   return parsed;
 }
 
@@ -215,8 +269,10 @@ export function getWellKnownConfig(): WellKnownConfig {
     ? path.join(cacheBase, "well-known")
     : DEFAULT_CACHE_DIR;
 
-  const maxArtifactMb = parseIntEnv(process.env.WELL_KNOWN_MAX_ARTIFACT_MB, DEFAULT_MAX_ARTIFACT_MB);
-  const maxUnpackedMb = parseIntEnv(process.env.WELL_KNOWN_MAX_UNPACKED_MB, DEFAULT_MAX_UNPACKED_MB);
+  // minValue 1: a 0-byte cap is a footgun (fails every fetch), so fall back to
+  // the default rather than silently disabling downloads.
+  const maxArtifactMb = parseIntEnv(process.env.WELL_KNOWN_MAX_ARTIFACT_MB, DEFAULT_MAX_ARTIFACT_MB, 1);
+  const maxUnpackedMb = parseIntEnv(process.env.WELL_KNOWN_MAX_UNPACKED_MB, DEFAULT_MAX_UNPACKED_MB, 1);
 
   return {
     pollIntervalMs: parseIntEnv(process.env.WELL_KNOWN_POLL_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS),

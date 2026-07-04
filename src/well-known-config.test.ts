@@ -4,6 +4,7 @@ import {
   isWellKnownUrl,
   parseWellKnownUrl,
   isOriginAllowed,
+  assertUrlAllowed,
   getWellKnownCacheKey,
   getWellKnownCachePath,
   getWellKnownIndexUrl,
@@ -149,6 +150,46 @@ describe("isOriginAllowed", () => {
         config
       )
     ).toBe(false);
+  });
+});
+
+describe("assertUrlAllowed", () => {
+  const allowed = { allowedOrigins: ["https://example.com"], allowHttp: false };
+
+  it("accepts an https url whose origin is allowlisted", () => {
+    expect(() =>
+      assertUrlAllowed("https://example.com/skills/a/SKILL.md", allowed)
+    ).not.toThrow();
+  });
+
+  it("rejects an off-allowlist origin (SSRF / cross-origin artifact)", () => {
+    expect(() =>
+      assertUrlAllowed("https://169.254.169.254/latest/meta-data", allowed)
+    ).toThrow(/not in WELL_KNOWN_ALLOWED_ORIGINS/);
+    expect(() =>
+      assertUrlAllowed("https://cdn.example.com/a.tgz", allowed)
+    ).toThrow(/not in WELL_KNOWN_ALLOWED_ORIGINS/);
+  });
+
+  it("rejects http when allowHttp is false, even if origin matches", () => {
+    expect(() =>
+      assertUrlAllowed("http://example.com/a", allowed)
+    ).toThrow(/disallowed scheme/);
+  });
+
+  it("permits http only when allowHttp is set and origin matches", () => {
+    const cfg = { allowedOrigins: ["http://example.com"], allowHttp: true };
+    expect(() => assertUrlAllowed("http://example.com/a", cfg)).not.toThrow();
+    // still origin-gated
+    expect(() => assertUrlAllowed("http://evil.com/a", cfg)).toThrow(
+      /not in WELL_KNOWN_ALLOWED_ORIGINS/
+    );
+  });
+
+  it("rejects non-http(s) schemes (file:, etc.)", () => {
+    expect(() => assertUrlAllowed("file:///etc/passwd", allowed)).toThrow(
+      /disallowed scheme/
+    );
   });
 });
 

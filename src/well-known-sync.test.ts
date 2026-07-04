@@ -39,6 +39,8 @@ interface RouteResponse {
   contentType?: string;
   body: Buffer | string;
   delay?: number;
+  /** Extra response headers (e.g. Location for redirects). */
+  headers?: Record<string, string>;
 }
 
 interface FixtureServer {
@@ -59,6 +61,7 @@ async function startFixtureServer(): Promise<FixtureServer> {
     res.writeHead(route.status ?? 200, {
       "Content-Type": route.contentType ?? "application/octet-stream",
       "Content-Length": String(body.byteLength),
+      ...route.headers,
     });
     if (route.delay) {
       setTimeout(() => res.end(body), route.delay);
@@ -235,6 +238,8 @@ describe("syncWellKnown", () => {
       cacheDir,
       maxArtifactBytes: 1024 * 1024,
       maxUnpackedBytes: 1024 * 1024,
+      allowedOrigins: [server.baseUrl],
+      allowHttp: true,
     };
   });
 
@@ -322,6 +327,62 @@ describe("syncWellKnown", () => {
     expect(result.error).toBeUndefined();
     expect(result.skillErrors.big).toMatch(/exceeds size cap/);
     expect(result.skillsSynced).toEqual([]);
+  });
+
+  it("rejects an artifact url whose origin is not on the allowlist (SSRF guard)", async () => {
+    const body = makeSkillMd("evil", "x");
+    // Absolute cross-origin url — a would-be SSRF target. It is allowlist-gated
+    // and never fetched, even though its digest would match.
+    const offOrigin = "http://169.254.169.254/latest/meta-data/SKILL.md";
+    setIndex([
+      { name: "evil", type: "skill-md", description: "evil", url: offOrigin, digest: digestOf(body) },
+    ]);
+
+    const result = await syncWellKnown(spec, options);
+
+    expect(result.error).toBeUndefined();
+    expect(result.skillsSynced).toEqual([]);
+    expect(result.skillErrors.evil).toMatch(/not in WELL_KNOWN_ALLOWED_ORIGINS/);
+  });
+
+  it("rejects a redirect that leaves the allowlist", async () => {
+    const body = makeSkillMd("redir", "x");
+    const { url, digest } = setSkillMd("redir", body);
+    // Same-origin artifact url, but the server 302s it off-allowlist.
+    server.routes.set(url, {
+      status: 302,
+      body: "",
+      headers: { Location: "http://169.254.169.254/evil" },
+    });
+    setIndex([
+      { name: "redir", type: "skill-md", description: "redir", url, digest },
+    ]);
+
+    const result = await syncWellKnown(spec, options);
+
+    expect(result.error).toBeUndefined();
+    expect(result.skillsSynced).toEqual([]);
+    expect(result.skillErrors.redir).toMatch(/not in WELL_KNOWN_ALLOWED_ORIGINS/);
+  }, 15000);
+
+  it("follows a same-origin redirect that stays on the allowlist", async () => {
+    const body = makeSkillMd("hop", "x");
+    const finalPath = "/.well-known/agent-skills/hop/real-SKILL.md";
+    server.routes.set(finalPath, { contentType: "text/markdown", body });
+    const startPath = "/.well-known/agent-skills/hop/SKILL.md";
+    server.routes.set(startPath, {
+      status: 302,
+      body: "",
+      headers: { Location: finalPath },
+    });
+    setIndex([
+      { name: "hop", type: "skill-md", description: "hop", url: startPath, digest: digestOf(body) },
+    ]);
+
+    const result = await syncWellKnown(spec, options);
+
+    expect(result.skillErrors).toEqual({});
+    expect(result.skillsSynced).toEqual(["hop"]);
   });
 
   it("warns and skips entries with unknown type, but other entries still load", async () => {

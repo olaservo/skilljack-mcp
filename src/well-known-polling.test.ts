@@ -76,7 +76,13 @@ describe("createWellKnownPollingManager", () => {
     server = await startServer();
     cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "wkpoll-"));
     spec = { origin: server.baseUrl, basePath: "/.well-known/agent-skills" };
-    options = { cacheDir, maxArtifactBytes: 1024 * 1024, maxUnpackedBytes: 1024 * 1024 };
+    options = {
+      cacheDir,
+      maxArtifactBytes: 1024 * 1024,
+      maxUnpackedBytes: 1024 * 1024,
+      allowedOrigins: [server.baseUrl],
+      allowHttp: true,
+    };
   });
 
   afterEach(async () => {

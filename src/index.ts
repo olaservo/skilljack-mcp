@@ -608,6 +608,8 @@ async function main() {
         cacheDir: wellKnownConfig.cacheDir,
         maxArtifactBytes: wellKnownConfig.maxArtifactBytes,
         maxUnpackedBytes: wellKnownConfig.maxUnpackedBytes,
+        allowedOrigins: wellKnownConfig.allowedOrigins,
+        allowHttp: wellKnownConfig.allowHttp,
       };
 
       const wkResults = await syncAllWellKnown(currentWellKnownSpecs, wkSyncOptions);
@@ -776,6 +778,8 @@ async function main() {
           cacheDir: freshWellKnownConfig.cacheDir,
           maxArtifactBytes: freshWellKnownConfig.maxArtifactBytes,
           maxUnpackedBytes: freshWellKnownConfig.maxUnpackedBytes,
+          allowedOrigins: freshWellKnownConfig.allowedOrigins,
+          allowHttp: freshWellKnownConfig.allowHttp,
         };
         const wkResults = await syncAllWellKnown(allowedWellKnownSpecs, wkSyncOptions);
         for (const result of wkResults) {
@@ -861,6 +865,8 @@ async function main() {
       cacheDir: wellKnownConfig.cacheDir,
       maxArtifactBytes: wellKnownConfig.maxArtifactBytes,
       maxUnpackedBytes: wellKnownConfig.maxUnpackedBytes,
+      allowedOrigins: wellKnownConfig.allowedOrigins,
+      allowHttp: wellKnownConfig.allowHttp,
     };
 
     wellKnownPollingManager = createWellKnownPollingManager(
