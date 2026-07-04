@@ -711,7 +711,11 @@ app.ontoolcancelled = (params) => {
   console.info("Tool call cancelled:", params.reason);
 };
 
-app.onerror = console.error;
+// ext-apps 1.7.4's App .d.ts no longer surfaces the inherited Protocol.onerror
+// (a declaration regression — the runtime and the package's own useApp docs
+// still support it). Assign through the base Protocol shape to keep error
+// logging without any behavior change.
+(app as { onerror?: (error: Error) => void }).onerror = console.error;
 
 app.onhostcontextchanged = handleHostContextChanged;
 
