@@ -20,10 +20,12 @@ CI (`.github/workflows/ci.yml`) runs `npm ci`, `npm run build`, and `npm test` o
 - `WELL_KNOWN_MAX_ARTIFACT_MB` - Per-artifact byte cap (default 10)
 - `WELL_KNOWN_MAX_UNPACKED_MB` - Archive uncompressed size cap (default 50)
 - `WELL_KNOWN_ALLOW_HTTP` - `1`/`true`/`yes` to permit `http://` origins (dev only)
+- `SKILLJACK_HTTP_PORT` / `SKILLJACK_HTTP` - Serve over stateless HTTP instead of stdio (port, default 3000)
 
 **CLI Options:**
 - Positional args: Skill directories, GitHub URLs, or well-known publisher URLs (e.g. `https://example.com/.well-known/agent-skills/`)
 - `--static`: Enable static mode (freeze skills at startup, no file watching)
+- `--http` / `--http=<port>`: Serve over stateless Streamable HTTP at `POST /mcp` instead of stdio (single token so it isn't parsed as a skill dir)
 
 ## Project Structure
 
@@ -44,6 +46,7 @@ src/
 ├── well-known-config.ts   # Well-known URL detection, parsing, allowlist, URL validation
 ├── well-known-sync.ts     # Fetch + verify (SHA-256) + safely extract publisher artifacts
 ├── well-known-polling.ts  # Periodic well-known index re-fetch (ETag/If-None-Match)
+├── http-transport.ts      # Stateless Streamable HTTP transport (buildCoreServer, startHttpServer)
 ├── types/                 # Ambient type declarations (e.g. yauzl-promise)
 └── ui/                    # MCP Apps UI (mcp-app.ts, skill-display.ts) built by Vite
 ```
@@ -172,6 +175,7 @@ The resource layer follows [SEP-2640 (Skills Extension)](https://github.com/mode
 ## Conventions
 
 - ES modules (`.js` extensions in imports)
+- Transports: stdio (default, full dynamic refresh + UI config/display tools) or stateless HTTP (`--http`, core skill surface only, per-request `StreamableHTTPServerTransport({ sessionIdGenerator: undefined })`, no push notifications). `main()` branches to `startHttpServer()` right after startup discovery.
 - Errors logged to stderr (stdout is MCP protocol)
 - Security: path traversal checks via `isPathWithinBase()`
 - File size limit: 1MB default (`MAX_FILE_SIZE_MB` env var to configure)

@@ -95,6 +95,16 @@ Use static mode when you need predictable behavior or have a fixed set of skills
 skilljack-mcp "C:/Users/you/skills"
 ```
 
+### HTTP Transport
+
+By default skilljack communicates over **stdio**. To serve over **stateless Streamable HTTP** instead, use `--http` (or `SKILLJACK_HTTP_PORT`):
+
+```bash
+skilljack-mcp --http=3000 /path/to/skills
+```
+
+Clients connect at `POST /mcp`. HTTP mode serves the core skill surface — `load-skill`, `skill-resource`, `skill://` resources, and `/skill` prompts. Because it is stateless (no session, no server→client stream), it does **not** send `listChanged` / `resources/updated` notifications, and the UI config/display tools are stdio-only. Skills are read at startup; restart to pick up on-disk changes. Use stdio when you need dynamic refresh or the configuration UI.
+
 ## Configuration UI
 
 In MCP clients that support [MCP Apps](https://blog.modelcontextprotocol.io/posts/2026-01-26-mcp-apps/) (like Claude Desktop), you can manage skill directories through an interactive UI.

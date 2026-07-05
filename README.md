@@ -48,7 +48,13 @@ SKILLS_DIR=/path/to/skills skilljack-mcp
 
 # Static mode (no file watching)
 skilljack-mcp --static /path/to/skills
+
+# Serve over HTTP instead of stdio (stateless Streamable HTTP on POST /mcp)
+skilljack-mcp --http=3000 /path/to/skills
+# or: SKILLJACK_HTTP_PORT=3000 skilljack-mcp /path/to/skills
 ```
+
+**Transports:** stdio (default) or stateless HTTP (`--http[=port]`, default `3000`, or `SKILLJACK_HTTP_PORT`). HTTP serves the core skill surface (`load-skill`, `skill-resource`, `skill://` resources, `/skill` prompts) at `POST /mcp`. Because it is stateless, it does not push `listChanged`/`resources/updated` notifications — skills are read at startup; restart to pick up changes. Use stdio for the dynamic-refresh and MCP-Apps UI features.
 
 ## Configuration and Skills Display UI
 

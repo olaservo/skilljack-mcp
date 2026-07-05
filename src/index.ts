@@ -31,6 +31,7 @@ import { discoverSkills, createSkillMap, applyInvocationOverrides, SkillSource, 
 import { registerSkillTool, getToolDescription, SkillState } from "./skill-tool.js";
 import { registerSkillResources } from "./skill-resources.js";
 import { registerSkillPrompts, refreshPrompts, PromptRegistry } from "./skill-prompts.js";
+import { startHttpServer } from "./http-transport.js";
 import {
   createSubscriptionManager,
   registerSubscriptionHandlers,
@@ -215,6 +216,34 @@ export function getStaticMode(): boolean {
 
   // Check config file (lowest priority)
   return getStaticModeFromConfig();
+}
+
+/**
+ * Resolve the HTTP port if HTTP transport is requested, else null (stdio).
+ *
+ * Enabled via `--http` / `--http=<port>` (single token so it isn't parsed as a
+ * skill directory) or `SKILLJACK_HTTP_PORT` / `SKILLJACK_HTTP`. Precedence for
+ * the port: `--http=<port>` > `SKILLJACK_HTTP_PORT` > default 3000.
+ */
+export function getHttpPort(): number | null {
+  const args = process.argv.slice(2);
+  const flag = args.find((a) => a === "--http" || a.startsWith("--http="));
+  const envPortRaw = process.env.SKILLJACK_HTTP_PORT;
+  const envToggle = process.env.SKILLJACK_HTTP?.toLowerCase();
+  const envEnabled =
+    !!envPortRaw || envToggle === "true" || envToggle === "1" || envToggle === "yes";
+
+  if (!flag && !envEnabled) {
+    return null;
+  }
+
+  if (flag && flag.startsWith("--http=")) {
+    const p = parseInt(flag.slice("--http=".length), 10);
+    if (!Number.isNaN(p) && p > 0) return p;
+  }
+  const envPort = parseInt(envPortRaw ?? "", 10);
+  if (!Number.isNaN(envPort) && envPort > 0) return envPort;
+  return 3000;
 }
 
 /**
@@ -677,6 +706,16 @@ async function main() {
   skillState.skillMap = createSkillMap(skills);
   console.error(`Discovered ${skills.length} skill(s)`);
   warnLargeSkillCount(skills.length);
+
+  // HTTP transport: serve the core skill surface over stateless HTTP and return.
+  // The stdio path below (UI config/display tools, remote-source polling, file
+  // watching, dynamic refresh notifications) is intentionally skipped in HTTP
+  // mode — stateless HTTP cannot push notifications. Restart to pick up changes.
+  const httpPort = getHttpPort();
+  if (httpPort !== null) {
+    await startHttpServer(httpPort, skillState);
+    return;
+  }
 
   // Create the MCP server
   // In static mode, disable listChanged for tools/prompts (skills list is frozen)
