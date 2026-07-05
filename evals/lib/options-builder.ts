@@ -108,19 +108,22 @@ export async function buildOptions(config: BuildOptionsConfig): Promise<any> {
   // it here would be duplicative and leak <location> paths that tempt the model
   // to Read the file directly instead of going through the skill tool.
   //
-  // We still need a non-empty systemPrompt to override the SDK's implicit
-  // `claude_code` preset default, which has a 0.2.x regression that suppresses
-  // skill tool activation. A minimal string is enough.
+  // A minimal string prompt is used for all modes (not the `claude_code`
+  // preset).
   //
-  // What we'd prefer (but can't use — 0.2.x `claude_code` preset regression):
-  //   systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt ?? '' }
-  // The preset + append form is the SDK's only native append mechanism, and
-  // it would preserve Claude Code's built-in tool/file-handling guidance. But
-  // on SDK 0.2.x (reproduced on 0.2.114 with the implicit-activation `code-style`
-  // task), the preset's baked-in guidance outweighs any appended content and
-  // the model never calls the skill tool. Revisit if the SDK fixes the
-  // regression or adds an append-without-preset option.
-  // See: C:\Users\johnn\OneDrive\Documents\everything\_mcp\__skills\agent-sdk-0.2.x-regression.md
+  // KNOWN ISSUE — MCP-mode activation on agent-sdk 0.3.x:
+  // In MCP mode the model frequently fails to call the skilljack skill tool.
+  // Root cause (verified 2026-07-05 via an init-message probe + a controlled
+  // 2x2): agent-sdk 0.3.x connects stdio MCP servers *asynchronously*, so the
+  // skilljack server is still `pending` at the SDK init message and its tools
+  // are absent from the tool list the model sees on its first turn — the model
+  // answers directly before skilljack finishes connecting. On 0.1.x the server
+  // connected synchronously before the first turn and activation worked.
+  // It is NOT the system prompt, NOT the `claude_code` preset (forcing the
+  // preset on 0.3.x still fails to activate), and NOT allowedTools. Local/native
+  // mode is unaffected because the native Skill tool is present on turn 1.
+  // Fix options: pin evals to a 0.1.x SDK, wait for MCP connection before the
+  // first query if the SDK exposes a hook, or fix upstream.
   const MINIMAL_SYSTEM_PROMPT =
     "You are a helpful assistant. Use the tools available to you to complete the user's request.";
   const effectiveSystemPrompt = systemPrompt
@@ -140,10 +143,10 @@ export async function buildOptions(config: BuildOptionsConfig): Promise<any> {
       model: modelId
     };
   } else if (mode === "local") {
-    // Local mode: use settingSources and Skill tool
-    // Note: the claude_code preset was dropped — in SDK 0.2.x the preset's
-    // baked-in guidance competes with skill activation. Plain systemPrompt
-    // (or none) keeps the Skill tool description's activation triggers intact.
+    // Local mode: use settingSources and the native Skill tool. A minimal
+    // string prompt is used (not the claude_code preset). Unlike MCP mode, the
+    // native Skill tool is present on the model's first turn, so activation
+    // works here — see the async-MCP-connect note above.
     await setupLocalSkills(skillsDir);
     await ensureSettingsJson();
 
