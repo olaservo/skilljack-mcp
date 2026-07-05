@@ -24,6 +24,21 @@ export interface SkillState {
 }
 
 /**
+ * Which channel carries the <available_skills> catalog to the client. The
+ * catalog goes through exactly one channel — never both.
+ *
+ * - "instructions" (default): catalog in server instructions (delivered in the
+ *   initialize handshake, so it survives tool-search deferral; frozen at
+ *   construction on stdio — the SDK has no way to update instructions).
+ * - "tool-description": catalog in the load-skill tool description
+ *   (dynamic via tools/listChanged, but invisible to clients that defer MCP
+ *   tool descriptions out of context, e.g. Claude Code tool search).
+ *
+ * Set via `--catalog=<mode>` or SKILLJACK_CATALOG (see getCatalogMode in index.ts).
+ */
+export type CatalogMode = "tool-description" | "instructions";
+
+/**
  * Input schema for the skill tool.
  */
 const SkillSchema = z.object({
@@ -49,29 +64,74 @@ const SkillSchema = z.object({
  * Generate the full tool description including usage guidance and skill list.
  * Exported so index.ts can use it when refreshing skills.
  */
-export function getToolDescription(skillState: SkillState): string {
-  const usage =
-    "Load a skill's full instructions. Returns the complete SKILL.md content " +
-    "with step-by-step guidance, examples, and file references to follow.\n\n" +
-    "IMPORTANT: When a skill is relevant to the user's task, you must invoke this tool " +
-    "IMMEDIATELY as your first action. NEVER just announce or mention a skill without " +
-    "actually calling this tool. This is a BLOCKING REQUIREMENT: invoke this tool BEFORE " +
-    "generating any other response about the task.\n\n";
+const LOAD_SKILL_USAGE =
+  "Load a skill's full instructions. Returns the complete SKILL.md content " +
+  "with step-by-step guidance, examples, and file references to follow.\n\n" +
+  "IMPORTANT: When a skill is relevant to the user's task, you must invoke this tool " +
+  "IMMEDIATELY as your first action. NEVER just announce or mention a skill without " +
+  "actually calling this tool. This is a BLOCKING REQUIREMENT: invoke this tool BEFORE " +
+  "generating any other response about the task.\n\n";
 
+export function getToolDescription(
+  skillState: SkillState,
+  catalogMode: CatalogMode = "instructions"
+): string {
+  if (catalogMode === "instructions") {
+    // Catalog lives in server instructions; keep the description to usage only.
+    return LOAD_SKILL_USAGE.trimEnd();
+  }
   const allSkills = Array.from(skillState.skillMap.values());
   const modelInvocableSkills = getModelInvocableSkills(allSkills);
+  return LOAD_SKILL_USAGE + generateInstructions(modelInvocableSkills);
+}
+
+/**
+ * Server-instructions text for `--catalog=instructions` mode: the same usage
+ * preamble + <available_skills> catalog that normally lives in the load-skill
+ * tool description. The preamble names the tool because under tool search the
+ * model may never see the tool description itself.
+ */
+export function getCatalogInstructions(skillState: SkillState): string {
+  const allSkills = Array.from(skillState.skillMap.values());
+  const modelInvocableSkills = getModelInvocableSkills(allSkills);
+  const usage =
+    "This server's `load-skill` tool loads a skill's full instructions. It returns " +
+    "the complete SKILL.md content with step-by-step guidance, examples, and file " +
+    "references to follow.\n\n" +
+    "IMPORTANT: When a skill is relevant to the user's task, you must invoke the " +
+    "`load-skill` tool IMMEDIATELY as your first action. NEVER just announce or " +
+    "mention a skill without actually calling the tool. This is a BLOCKING " +
+    "REQUIREMENT: invoke `load-skill` BEFORE generating any other response about " +
+    "the task.\n\n";
   return usage + generateInstructions(modelInvocableSkills);
+}
+
+/**
+ * Server `instructions` value for a given catalog mode, or undefined to omit
+ * the field. Used by both server construction sites (index.ts stdio,
+ * http-transport.ts). Only "instructions" mode emits instructions — the
+ * catalog is never delivered through both channels at once.
+ */
+export function getServerInstructions(
+  skillState: SkillState,
+  catalogMode: CatalogMode = "instructions"
+): string | undefined {
+  if (catalogMode === "instructions") {
+    return getCatalogInstructions(skillState);
+  }
+  return undefined;
 }
 
 export function registerSkillTool(
   server: McpServer,
-  skillState: SkillState
+  skillState: SkillState,
+  catalogMode: CatalogMode = "instructions"
 ): RegisteredTool {
   const skillTool = server.registerTool(
     "load-skill",
     {
       title: "Load Skill",
-      description: getToolDescription(skillState),
+      description: getToolDescription(skillState, catalogMode),
       inputSchema: SkillSchema,
       annotations: {
         readOnlyHint: true,

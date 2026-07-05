@@ -9,7 +9,7 @@ An MCP server that jacks [Agent Skills](https://agentskills.io) directly into yo
 
 > **Recommended:** For best results, use an MCP client that supports `tools/listChanged` notifications (e.g., Claude Code). This enables dynamic skill discovery - when skills are added or modified, the client automatically refreshes its understanding of available skills. Alternatively, use `--static` mode for predictable behavior with a fixed skill set.
 
-> ⚠️ **Tool search / deferred tools limitation.** Skilljack delivers its skill catalog inside the `load-skill` **tool description**. Clients with **tool search / deferred tool loading** enabled (the default on modern Claude Code, ~2.1.x) do **not** load MCP tool descriptions into the model's context up front — they are discovered on demand — so the model does not see the `<available_skills>` catalog and will **not reliably auto-activate** skilljack skills. To use skilljack's automatic activation today, **disable tool search** (e.g. `ENABLE_TOOL_SEARCH=false`). Making skilljack work with tool search enabled is an open item ([tracking issue](https://github.com/olaservo/skilljack-mcp/issues)).
+> **Tool search / deferred tools.** By default, skilljack delivers its skill catalog via MCP **server instructions**, which arrive in the `initialize` handshake and reach the model even when **tool search / deferred tool loading** is enabled (the default on modern Claude Code, ~2.1.x) — automatic skill activation works out of the box. The alternative `--catalog=tool-description` mode delivers the catalog inside the `load-skill` tool description (dynamically refreshable via `tools/listChanged`), but tool-search clients defer MCP tool descriptions out of context, so that mode requires disabling tool search (e.g. `ENABLE_TOOL_SEARCH=false`) for auto-activation. See [Catalog Delivery](#catalog-delivery).
 
 ## Features
 
@@ -27,7 +27,8 @@ An MCP server that jacks [Agent Skills](https://agentskills.io) directly into yo
 This server demonstrates a way to approach integrating skills using existing MCP primitives.
 
 MCP already has the building blocks:
-- **Tools** for on-demand skill loading (the `load-skill` tool with dynamically updated descriptions)
+- **Tools** for on-demand skill loading (the `load-skill` tool)
+- **Server instructions** for surfacing the skill catalog at `initialize` (the default catalog channel)
 - **Resources** for explicit skill access (`skill://` URIs)
 - **Notifications** for real-time updates (`tools/listChanged`, `resources/updated`)
 - **Prompts** for explicitly invoking skills by name (`/my-server-skill`)
@@ -97,6 +98,21 @@ Use static mode when you need predictable behavior or have a fixed set of skills
 skilljack-mcp "C:/Users/you/skills"
 ```
 
+### Catalog Delivery
+
+The `<available_skills>` catalog is delivered through exactly **one** channel, selected with `--catalog=<mode>` or `SKILLJACK_CATALOG` — never both:
+
+```bash
+# Default: catalog in server instructions (survives tool search)
+skilljack-mcp /path/to/skills
+
+# Alternative: catalog in the load-skill tool description
+skilljack-mcp --catalog=tool-description /path/to/skills
+```
+
+- **`instructions`** (default) — the catalog (plus `load-skill` usage guidance) is sent as MCP server `instructions` in the `initialize` handshake. It is visible to the model even under tool search / deferred tool loading. Trade-off: on stdio, the MCP SDK sets instructions once at construction, so the catalog is **frozen until restart** — live skill add/remove won't reach connected clients. (Over HTTP, instructions are regenerated per request from the watched skill state, so *newly connecting* clients always get a current catalog; already-connected clients receive instructions only at `initialize` and see changes after reconnecting.)
+- **`tool-description`** — the catalog lives in the `load-skill` tool description and refreshes live via `tools/listChanged` when skills change. Trade-off: clients with tool search enabled defer MCP tool descriptions out of context, so the model never sees the catalog; requires `ENABLE_TOOL_SEARCH=false` for auto-activation.
+
 ### HTTP Transport
 
 By default skilljack communicates over **stdio**. To serve over **stateless Streamable HTTP** instead, use `--http` (or `SKILLJACK_HTTP_PORT`):
@@ -105,7 +121,7 @@ By default skilljack communicates over **stdio**. To serve over **stateless Stre
 skilljack-mcp --http=3000 /path/to/skills
 ```
 
-Clients connect at `POST /mcp`. HTTP mode serves the core skill surface — `load-skill`, `skill-resource`, `skill://` resources, and `/skill` prompts. Because it is stateless (no session, no server→client stream), it does **not** send `listChanged` / `resources/updated` notifications, and the UI config/display tools are stdio-only. Skills are read at startup; restart to pick up on-disk changes. Use stdio when you need dynamic refresh or the configuration UI.
+Clients connect at `POST /mcp`. HTTP mode serves the core skill surface — `load-skill`, `skill-resource`, `skill://` resources, and `/skill` prompts. Discovery-on-change works the same as stdio: file watchers and remote-source polling keep the skill state fresh, and every request reads it — so newly connecting clients get a current catalog, and `load-skill`/`tools/list` reflect changes immediately. Because the transport is stateless (no session, no server→client stream), it does **not** *push* `listChanged` / `resources/updated` notifications — already-connected clients see changes on their next request (for the instructions catalog, on their next reconnect). The UI config/display tools are stdio-only.
 
 ## Configuration UI
 
@@ -143,8 +159,8 @@ Skills from GitHub repositories show the org/repo name (e.g., `modelcontextproto
 The server implements the [Agent Skills](https://agentskills.io) progressive disclosure pattern with dynamic updates:
 
 1. **At startup**: Discovers skills from configured directories and starts file watchers
-2. **On connection**: `load-skill` tool description includes available skills metadata
-3. **On file change**: Re-discovers skills, updates tool description, sends `tools/listChanged`
+2. **On connection**: the skill catalog is delivered via server instructions (default) or the `load-skill` tool description (`--catalog=tool-description`)
+3. **On file change**: Re-discovers skills, updates the tool description and prompts, sends `tools/listChanged` (in tool-description mode this refreshes the catalog; in instructions mode the catalog is frozen until restart on stdio)
 4. **On tool call**: Agent calls `load-skill` tool to load full SKILL.md content
 5. **As needed**: Agent calls `skill-resource` to load additional files
 
@@ -155,10 +171,11 @@ The server implements the [Agent Skills](https://agentskills.io) progressive dis
 │   • Starts watching for SKILL.md changes                 │
 │   ↓                                                      │
 │ MCP Client connects                                      │
-│   • load-skill tool description includes available skills│
+│   • Skill catalog delivered via server instructions      │
+│     (default) or load-skill tool description             │
 │   • Prompts registered for each skill                    │
 │   ↓                                                      │
-│ LLM sees skill metadata in tool description              │
+│ LLM sees skill metadata in the catalog                   │
 │   ↓                                                      │
 │ SKILL.md added/modified/removed                          │
 │   • Server re-discovers skills                           │
@@ -182,7 +199,7 @@ The server implements the [Agent Skills](https://agentskills.io) progressive dis
 
 This server exposes skills via **tools**, **resources**, and **prompts**:
 
-- **Tools** (`load-skill`, `skill-resource`) - For your agent to use autonomously. The LLM sees available skills in the tool description and calls them as needed.
+- **Tools** (`load-skill`, `skill-resource`) - For your agent to use autonomously. The LLM sees available skills in the skill catalog (server instructions by default, or the `load-skill` tool description) and calls them as needed.
 - **Prompts** (`/skill`, `/skill-name`) - For explicit user invocation. Use `/skill` with auto-completion or select a skill directly by name.
 - **Resources** (`skill://` URIs) - For manual selection in apps that support it (e.g., Claude Desktop's resource picker). Useful when you want to explicitly attach a skill to the conversation.
 
@@ -200,13 +217,13 @@ This server implements the [Agent Skills progressive disclosure pattern](https:/
 
 ### How it works
 
-1. **Discovery** - Server loads metadata from all skills into the `load-skill` tool description
+1. **Discovery** - Server loads metadata from all skills into the skill catalog (server instructions by default, or the `load-skill` tool description)
 2. **Activation** - When a skill is loaded (via tool, prompt, or resource), only the SKILL.md content is returned
 3. **Execution** - SKILL.md references additional files; agent fetches them with `skill-resource` as needed
 
 ### Why SKILL.md documents its own resources
 
-The `load-skill` tool description and the loaded SKILL.md body don't enumerate every file in a skill directory. Instead, skill authors document available resources directly in their SKILL.md (e.g., "Copy the template from `templates/server.ts`"). This design choice follows the spec because:
+The skill catalog and the loaded SKILL.md body don't enumerate every file in a skill directory. Instead, skill authors document available resources directly in their SKILL.md (e.g., "Copy the template from `templates/server.ts`"). This design choice follows the spec because:
 
 - **Skill authors know best** - They decide which files are relevant and when to use them
 - **Context efficiency** - Loading everything upfront wastes tokens on files the agent may not need
@@ -362,14 +379,14 @@ Not protected against:
 The server watches skill directories for changes. When SKILL.md files are added, modified, or removed:
 
 1. Skills are re-discovered from all configured directories
-2. The `load-skill` tool's description is updated with current skill names and metadata
+2. The `load-skill` tool's description is updated with current skill names and metadata (in `--catalog=tool-description` mode; in the default instructions mode the catalog itself is frozen until restart on stdio)
 3. Per-skill prompts are added, removed, or updated accordingly
 4. `tools/listChanged` and `prompts/listChanged` notifications are sent to connected clients
 5. Clients that support these notifications will refresh tool and prompt definitions
 
 ## Skill Metadata Format
 
-The `load-skill` tool description includes metadata for all available skills in XML format:
+The skill catalog (server instructions by default, or the `load-skill` tool description in `--catalog=tool-description` mode) includes metadata for all available skills in XML format:
 
 ```markdown
 # Skills
@@ -385,7 +402,7 @@ When a user's task matches a skill description below: 1) activate it, 2) follow 
 </available_skills>
 ```
 
-This metadata is dynamically updated when skills change - clients supporting `tools/listChanged` will automatically refresh.
+In tool-description mode this metadata is dynamically updated when skills change — clients supporting `tools/listChanged` will automatically refresh. In the default instructions mode it is generated at startup (stdio) or per request (HTTP).
 
 ## Skill Discovery
 
@@ -400,7 +417,7 @@ Each skill subdirectory must contain a `SKILL.md` file with YAML frontmatter inc
 
 Control which skills appear in tools vs prompts using optional frontmatter fields:
 
-| Frontmatter | In Tool Description | In Prompts Menu | Use Case |
+| Frontmatter | In Skill Catalog | In Prompts Menu | Use Case |
 |-------------|---------------------|-----------------|----------|
 | (default) | Yes | Yes | Normal skills |
 | `disable-model-invocation: true` | No | Yes | User-triggered workflows (deploy, commit) |

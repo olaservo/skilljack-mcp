@@ -6,6 +6,15 @@ import { spawn, ChildProcess } from "child_process";
 export type EvalMode = "mcp" | "local" | "cli-local" | "mcp+local";
 
 /**
+ * Which channel the skilljack server under test uses for the skill catalog
+ * (passed through as `--catalog=<mode>`; see CatalogMode in src/skill-tool.ts).
+ */
+export type CatalogMode = "tool-description" | "instructions";
+
+/** Whether the Agent SDK client runs with tool search (deferred tool loading). */
+export type ToolSearchSetting = "on" | "off";
+
+/**
  * skilljack HTTP servers spawned for MCP-mode evals. Tracked so eval.ts can
  * tear them down after each run via cleanupEvalServers().
  */
@@ -19,7 +28,7 @@ const spawnedHttpServers: ChildProcess[] = [];
  * model's first turn — the agent-sdk 0.3.x stdio connect race leaves a
  * stdio server `pending` and its tools absent turn 1. See evals/README.md.
  */
-async function startSkilljackHttp(skillsDir: string): Promise<string> {
+async function startSkilljackHttp(skillsDir: string, extraArgs: string[] = []): Promise<string> {
   const serverPath = path.resolve("./dist/index.js");
   try {
     await fs.access(serverPath);
@@ -27,7 +36,7 @@ async function startSkilljackHttp(skillsDir: string): Promise<string> {
     throw new Error(`Skilljack MCP server not found at ${serverPath}. Run 'npm run build' first.`);
   }
   const absoluteSkillsDir = path.resolve(skillsDir);
-  const proc = spawn("node", [serverPath, "--http=0", absoluteSkillsDir], {
+  const proc = spawn("node", [serverPath, "--http=0", ...extraArgs, absoluteSkillsDir], {
     stdio: ["ignore", "ignore", "pipe"],
   });
   spawnedHttpServers.push(proc);
@@ -68,15 +77,23 @@ export function cleanupEvalServers(): void {
  * into context every turn. With tool search ON (default), MCP tool descriptions
  * are DEFERRED out of context, so the model never sees the skill catalog and
  * won't activate. Skilljack's catalog-in-tool-description method requires this
- * to be off. See evals/README.md.
+ * to be off; the catalog-in-instructions method (--catalog=instructions) is the
+ * experiment for surviving tool search ON. See evals/README.md.
+ *
+ * Always set explicitly (both "true" and "false") so a stray value in the
+ * parent shell environment can't skew runs.
  */
-const TOOL_SEARCH_OFF_ENV = { ENABLE_TOOL_SEARCH: "false" as const };
+function toolSearchEnv(toolSearch: ToolSearchSetting): { ENABLE_TOOL_SEARCH: string } {
+  return { ENABLE_TOOL_SEARCH: toolSearch === "on" ? "true" : "false" };
+}
 
 export interface BuildOptionsConfig {
   mode: EvalMode;
   systemPrompt?: string;  // Optional - uses Claude Code default if not provided
   model?: string;
   skillsDir: string;  // Path to test skills directory
+  catalog?: CatalogMode;  // Skilljack --catalog mode (MCP modes; server default "instructions" if unset)
+  toolSearch?: ToolSearchSetting;  // Agent SDK tool search (default "off" = pre-existing behavior)
 }
 
 /**
@@ -165,7 +182,8 @@ async function copyDir(src: string, dest: string): Promise<void> {
  * Build query options for skill eval
  */
 export async function buildOptions(config: BuildOptionsConfig): Promise<any> {
-  const { mode, systemPrompt, model, skillsDir } = config;
+  const { mode, systemPrompt, model, skillsDir, catalog, toolSearch = "off" } = config;
+  const skilljackArgs = catalog ? [`--catalog=${catalog}`] : [];
 
   // Default to Sonnet 4.6
   const modelId = model || "claude-sonnet-4-6";
@@ -227,7 +245,7 @@ export async function buildOptions(config: BuildOptionsConfig): Promise<any> {
       model: modelId,
       // Uniform tool visibility across modes (the native Skill tool can also be
       // deferred under tool search); keeps cross-mode comparisons apples-to-apples.
-      env: { ...process.env, ...TOOL_SEARCH_OFF_ENV }
+      env: { ...process.env, ...toolSearchEnv(toolSearch) }
     };
   } else if (mode === "mcp+local") {
     // Combined mode: both MCP server (over HTTP) AND local skills enabled.
@@ -235,7 +253,7 @@ export async function buildOptions(config: BuildOptionsConfig): Promise<any> {
     await setupLocalSkills(skillsDir);
     await ensureSettingsJson();
 
-    const url = await startSkilljackHttp(skillsDir);
+    const url = await startSkilljackHttp(skillsDir, skilljackArgs);
 
     options = {
       cwd: process.cwd(),
@@ -248,12 +266,14 @@ export async function buildOptions(config: BuildOptionsConfig): Promise<any> {
       allowedTools: ["Bash", "Read", "Write", "Skill", "mcp__skilljack"],
       permissionMode: "default" as const,
       model: modelId,
-      env: { ...process.env, ...TOOL_SEARCH_OFF_ENV }
+      env: { ...process.env, ...toolSearchEnv(toolSearch) }
     };
   } else {
     // MCP mode: skilljack over HTTP (avoids the stdio connect race, regression A)
-    // + tool search off (surfaces the tool-description catalog, regression B).
-    const url = await startSkilljackHttp(skillsDir);
+    // + tool search off by default (surfaces the tool-description catalog,
+    // regression B). --tool-search=on + --catalog=instructions is the
+    // instructions-channel experiment.
+    const url = await startSkilljackHttp(skillsDir, skilljackArgs);
 
     options = {
       cwd: process.cwd(),
@@ -264,7 +284,7 @@ export async function buildOptions(config: BuildOptionsConfig): Promise<any> {
       allowedTools: ["mcp__skilljack"],
       permissionMode: "default" as const,
       model: modelId,
-      env: { ...process.env, ...TOOL_SEARCH_OFF_ENV }
+      env: { ...process.env, ...toolSearchEnv(toolSearch) }
     };
   }
 

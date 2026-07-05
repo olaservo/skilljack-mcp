@@ -27,8 +27,8 @@ import chokidar from "chokidar";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { discoverSkills, createSkillMap, applyInvocationOverrides, SkillSource, DEFAULT_SKILL_SOURCE, BUNDLED_SKILL_SOURCE, warnLargeSkillCount, generateInstructions, getModelInvocableSkills } from "./skill-discovery.js";
-import { registerSkillTool, getToolDescription, SkillState } from "./skill-tool.js";
+import { discoverSkills, createSkillMap, applyInvocationOverrides, SkillSource, DEFAULT_SKILL_SOURCE, BUNDLED_SKILL_SOURCE, warnLargeSkillCount } from "./skill-discovery.js";
+import { registerSkillTool, getToolDescription, getServerInstructions, SkillState, CatalogMode } from "./skill-tool.js";
 import { registerSkillResources } from "./skill-resources.js";
 import { registerSkillPrompts, refreshPrompts, PromptRegistry } from "./skill-prompts.js";
 import { startHttpServer } from "./http-transport.js";
@@ -50,7 +50,7 @@ import {
   getRepoCachePath,
 } from "./github-config.js";
 import { syncAllRepos, SyncOptions } from "./github-sync.js";
-import { createPollingManager, PollingManager } from "./github-polling.js";
+import { createPollingManager } from "./github-polling.js";
 import {
   isWellKnownUrl,
   parseWellKnownUrl,
@@ -65,10 +65,7 @@ import {
   syncAllWellKnown,
   SyncOptions as WellKnownSyncOptions,
 } from "./well-known-sync.js";
-import {
-  createWellKnownPollingManager,
-  PollingManager as WellKnownPollingManager,
-} from "./well-known-polling.js";
+import { createWellKnownPollingManager } from "./well-known-polling.js";
 
 /**
  * Subdirectories to check for skills within the configured directory.
@@ -216,6 +213,29 @@ export function getStaticMode(): boolean {
 
   // Check config file (lowest priority)
   return getStaticModeFromConfig();
+}
+
+/**
+ * Resolve which channel carries the skill catalog (see CatalogMode in
+ * skill-tool.ts — exactly one channel, never both). Priority: `--catalog=<mode>`
+ * (single token so it isn't parsed as a skill directory) > SKILLJACK_CATALOG
+ * env var > "instructions". Unknown values warn and fall back to the default.
+ */
+export function getCatalogMode(): CatalogMode {
+  const args = process.argv.slice(2);
+  const flag = args.find((a) => a.startsWith("--catalog="));
+  const raw = flag ? flag.slice("--catalog=".length) : process.env.SKILLJACK_CATALOG;
+  if (!raw) {
+    return "instructions";
+  }
+  const value = raw.toLowerCase();
+  if (value === "tool-description" || value === "instructions") {
+    return value;
+  }
+  console.error(
+    `Unknown catalog mode "${raw}" (expected tool-description | instructions); using "instructions"`
+  );
+  return "instructions";
 }
 
 /**
@@ -393,13 +413,14 @@ const SKILL_REFRESH_DEBOUNCE_MS = 500;
  * @param promptRegistry - For refreshing skill prompts
  * @param subscriptionManager - For refreshing resource subscriptions
  */
-function refreshSkills(
-  skillsDirs: string[],
-  server: McpServer,
-  skillTool: RegisteredTool,
-  promptRegistry: PromptRegistry,
-  subscriptionManager: SubscriptionManager
-): void {
+/**
+ * Re-discover skills and swap skillState.skillMap — the transport-agnostic
+ * core of a refresh. Used directly by the HTTP path (where each request reads
+ * skillState fresh, so a state swap is all a refresh needs) and by
+ * refreshSkills() on the stdio path (which adds the server-bound updates:
+ * tool description, prompts, subscriptions, notifications).
+ */
+function refreshSkillState(skillsDirs: string[]): void {
   console.error("Refreshing skills...");
 
   // Re-discover all skills using current source map
@@ -415,10 +436,23 @@ function refreshSkills(
 
   console.error(`Skills refreshed: ${oldCount} -> ${skills.length} skill(s)`);
   warnLargeSkillCount(skills.length);
+}
 
-  // Update the skill tool description with new instructions
+function refreshSkills(
+  skillsDirs: string[],
+  server: McpServer,
+  skillTool: RegisteredTool,
+  promptRegistry: PromptRegistry,
+  subscriptionManager: SubscriptionManager
+): void {
+  refreshSkillState(skillsDirs);
+
+  // Update the skill tool description with new instructions. In
+  // catalog=instructions mode this is usage-only (no skill list) — the catalog
+  // lives in server instructions, which the SDK freezes at construction, so
+  // dynamic skill changes cannot reach the client until restart in that mode.
   skillTool.update({
-    description: getToolDescription(skillState),
+    description: getToolDescription(skillState, getCatalogMode()),
   });
 
   // Refresh prompts to match new skill state
@@ -454,17 +488,13 @@ function refreshSkills(
  * Watches for SKILL.md additions, modifications, and deletions.
  *
  * @param skillsDirs - The configured skill directories
- * @param server - The MCP server instance
- * @param skillTool - The registered skill tool to update
- * @param promptRegistry - For refreshing skill prompts
- * @param subscriptionManager - For refreshing subscriptions
+ * @param onRefresh - Called (debounced) when skills change. The stdio path
+ *   passes refreshSkills (state + server updates + notifications); the HTTP
+ *   path passes refreshSkillState (state only — requests read it fresh).
  */
 function watchSkillDirectories(
   skillsDirs: string[],
-  server: McpServer,
-  skillTool: RegisteredTool,
-  promptRegistry: PromptRegistry,
-  subscriptionManager: SubscriptionManager
+  onRefresh: () => void
 ): void {
   let refreshTimeout: NodeJS.Timeout | null = null;
 
@@ -474,7 +504,7 @@ function watchSkillDirectories(
     }
     refreshTimeout = setTimeout(() => {
       refreshTimeout = null;
-      refreshSkills(skillsDirs, server, skillTool, promptRegistry, subscriptionManager);
+      onRefresh();
     }, SKILL_REFRESH_DEBOUNCE_MS);
   };
 
@@ -549,6 +579,65 @@ function watchSkillDirectories(
     console.error(`Directory removed: ${dirPath}`);
     debouncedRefresh();
   });
+}
+
+/**
+ * Start GitHub / well-known polling managers that re-sync remote sources and
+ * invoke onRefresh when updates land. Shared by the stdio and HTTP paths —
+ * only the refresh callback differs (stdio also pushes notifications).
+ */
+function startRemoteSourcePolling(
+  githubConfig: ReturnType<typeof getGitHubConfig>,
+  wellKnownConfig: ReturnType<typeof getWellKnownConfig>,
+  onRefresh: () => void
+): void {
+  if (currentGithubSpecs.length > 0 && githubConfig.pollIntervalMs > 0) {
+    const syncOptions: SyncOptions = {
+      cacheDir: githubConfig.cacheDir,
+      token: githubConfig.token,
+      shallowClone: true,
+    };
+
+    const pollingManager = createPollingManager(currentGithubSpecs, syncOptions, {
+      intervalMs: githubConfig.pollIntervalMs,
+      onUpdate: (spec) => {
+        console.error(`GitHub update detected for ${spec.owner}/${spec.repo}`);
+        onRefresh();
+      },
+      onError: (spec, error) => {
+        console.error(`GitHub polling error for ${spec.owner}/${spec.repo}: ${error.message}`);
+      },
+    });
+
+    pollingManager.start();
+  }
+
+  if (currentWellKnownSpecs.length > 0 && wellKnownConfig.pollIntervalMs > 0) {
+    const wkSyncOptions: WellKnownSyncOptions = {
+      cacheDir: wellKnownConfig.cacheDir,
+      maxArtifactBytes: wellKnownConfig.maxArtifactBytes,
+      maxUnpackedBytes: wellKnownConfig.maxUnpackedBytes,
+      allowedOrigins: wellKnownConfig.allowedOrigins,
+      allowHttp: wellKnownConfig.allowHttp,
+    };
+
+    const wellKnownPollingManager = createWellKnownPollingManager(
+      currentWellKnownSpecs,
+      wkSyncOptions,
+      {
+        intervalMs: wellKnownConfig.pollIntervalMs,
+        onUpdate: (spec) => {
+          console.error(`Well-known update detected for ${spec.origin}`);
+          onRefresh();
+        },
+        onError: (spec, error) => {
+          console.error(`Well-known polling error for ${spec.origin}: ${error.message}`);
+        },
+      }
+    );
+
+    wellKnownPollingManager.start();
+  }
 }
 
 /**
@@ -710,12 +799,25 @@ async function main() {
   warnLargeSkillCount(skills.length);
 
   // HTTP transport: serve the core skill surface over stateless HTTP and return.
-  // The stdio path below (UI config/display tools, remote-source polling, file
-  // watching, dynamic refresh notifications) is intentionally skipped in HTTP
-  // mode — stateless HTTP cannot push notifications. Restart to pick up changes.
+  // Discovery-on-change works the same as stdio — file watchers and remote-source
+  // polling refresh skillState, and every request (including each new client's
+  // initialize, which carries the instructions catalog) reads that state fresh.
+  // What stateless HTTP cannot do is *push*: no listChanged/resources/updated
+  // notifications, so already-connected clients see changes on their next
+  // request rather than being told to refresh. UI config/display tools remain
+  // stdio-only.
   const httpPort = getHttpPort();
+  const catalogMode = getCatalogMode();
   if (httpPort !== null) {
-    await startHttpServer(httpPort, skillState);
+    if (!isStatic) {
+      if (currentSkillsDirs.length > 0) {
+        watchSkillDirectories(currentSkillsDirs, () => refreshSkillState(currentSkillsDirs));
+      }
+      startRemoteSourcePolling(githubConfig, wellKnownConfig, () =>
+        refreshSkillState(currentSkillsDirs)
+      );
+    }
+    await startHttpServer(httpPort, skillState, catalogMode);
     return;
   }
 
@@ -723,13 +825,12 @@ async function main() {
   // In static mode, disable listChanged for tools/prompts (skills list is frozen)
   // Resource subscriptions remain dynamic for individual skill file watching
   //
-  // Server instructions: XML catalog of model-invocable skills. Some clients
-  // (e.g. Claude Agent SDK 0.2.x without the claude_code preset) route skill
-  // awareness via server instructions rather than the skill tool's description,
-  // so we provide both. Instructions are set once at construction; dynamic skill
-  // changes are still delivered via the load-skill tool's description + tools/listChanged.
-  const initialSkills = Array.from(skillState.skillMap.values());
-  const initialInstructions = generateInstructions(getModelInvocableSkills(initialSkills));
+  // The skill catalog goes through exactly ONE channel (never both): server
+  // instructions (default; survives tool-search deferral, but instructions are
+  // set once at construction, so the catalog is frozen until restart on stdio)
+  // or the load-skill tool description (`--catalog=tool-description`; dynamic
+  // via tools/listChanged, but deferred out of context under tool search).
+  const initialInstructions = getServerInstructions(skillState, catalogMode);
 
   const server = new McpServer(
     {
@@ -746,12 +847,12 @@ async function main() {
           "io.modelcontextprotocol/skills": {},
         },
       },
-      instructions: initialInstructions,
+      ...(initialInstructions !== undefined && { instructions: initialInstructions }),
     }
   );
 
   // Register tools, resources, and prompts
-  const skillTool = registerSkillTool(server, skillState);
+  const skillTool = registerSkillTool(server, skillState, catalogMode);
   registerSkillResources(server, skillState);
   const promptRegistry = registerSkillPrompts(server, skillState);
 
@@ -867,65 +968,15 @@ async function main() {
     });
   }
 
-  // Set up file watchers for skill directory changes (skip in static mode)
-  if (!isStatic && currentSkillsDirs.length > 0) {
-    watchSkillDirectories(currentSkillsDirs, server, skillTool, promptRegistry, subscriptionManager);
-  }
-
-  // Set up GitHub polling for updates (skip in static mode)
-  let pollingManager: PollingManager | null = null;
-  if (!isStatic && currentGithubSpecs.length > 0 && githubConfig.pollIntervalMs > 0) {
-    const syncOptions: SyncOptions = {
-      cacheDir: githubConfig.cacheDir,
-      token: githubConfig.token,
-      shallowClone: true,
-    };
-
-    pollingManager = createPollingManager(currentGithubSpecs, syncOptions, {
-      intervalMs: githubConfig.pollIntervalMs,
-      onUpdate: (spec, result) => {
-        console.error(`GitHub update detected for ${spec.owner}/${spec.repo}`);
-        refreshSkills(currentSkillsDirs, server, skillTool, promptRegistry, subscriptionManager);
-      },
-      onError: (spec, error) => {
-        console.error(`GitHub polling error for ${spec.owner}/${spec.repo}: ${error.message}`);
-      },
-    });
-
-    pollingManager.start();
-  }
-
-  // Set up well-known polling for updates (skip in static mode)
-  let wellKnownPollingManager: WellKnownPollingManager | null = null;
-  if (
-    !isStatic &&
-    currentWellKnownSpecs.length > 0 &&
-    wellKnownConfig.pollIntervalMs > 0
-  ) {
-    const wkSyncOptions: WellKnownSyncOptions = {
-      cacheDir: wellKnownConfig.cacheDir,
-      maxArtifactBytes: wellKnownConfig.maxArtifactBytes,
-      maxUnpackedBytes: wellKnownConfig.maxUnpackedBytes,
-      allowedOrigins: wellKnownConfig.allowedOrigins,
-      allowHttp: wellKnownConfig.allowHttp,
-    };
-
-    wellKnownPollingManager = createWellKnownPollingManager(
-      currentWellKnownSpecs,
-      wkSyncOptions,
-      {
-        intervalMs: wellKnownConfig.pollIntervalMs,
-        onUpdate: (spec, _result) => {
-          console.error(`Well-known update detected for ${spec.origin}`);
-          refreshSkills(currentSkillsDirs, server, skillTool, promptRegistry, subscriptionManager);
-        },
-        onError: (spec, error) => {
-          console.error(`Well-known polling error for ${spec.origin}: ${error.message}`);
-        },
-      }
-    );
-
-    wellKnownPollingManager.start();
+  // Set up file watchers and remote-source polling (skip in static mode).
+  // On stdio a refresh also updates the tool/prompts and pushes notifications.
+  if (!isStatic) {
+    const refreshAll = () =>
+      refreshSkills(currentSkillsDirs, server, skillTool, promptRegistry, subscriptionManager);
+    if (currentSkillsDirs.length > 0) {
+      watchSkillDirectories(currentSkillsDirs, refreshAll);
+    }
+    startRemoteSourcePolling(githubConfig, wellKnownConfig, refreshAll);
   }
 
   // Connect via stdio transport

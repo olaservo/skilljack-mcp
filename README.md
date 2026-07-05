@@ -2,7 +2,7 @@
 
 An MCP server that jacks [Agent Skills](https://agentskills.io) directly into your LLM's brain.
 
-> ⚠️ **Heads up — tool search / deferred tools.** Skilljack surfaces its skill catalog through the `load-skill` **tool description**. Clients with **tool search / deferred tool loading** on (the default on modern Claude Code) don't load MCP tool descriptions into context up front, so the model won't reliably auto-activate skilljack skills. Set `ENABLE_TOOL_SEARCH=false` to use automatic activation today. Working with tool search enabled is an open item.
+> **Tool search / deferred tools.** By default, skilljack delivers its skill catalog via MCP **server instructions**, which arrive in the `initialize` handshake and are visible to the model even when **tool search / deferred tool loading** is enabled (the default on modern Claude Code) — so automatic skill activation works out of the box. The alternative `--catalog=tool-description` mode delivers the catalog through the `load-skill` tool description instead (dynamic via `tools/listChanged`), but tool-search clients defer tool descriptions out of context, so that mode needs `ENABLE_TOOL_SEARCH=false` to auto-activate.
 
 ## Installation
 
@@ -54,9 +54,16 @@ skilljack-mcp --static /path/to/skills
 # Serve over HTTP instead of stdio (stateless Streamable HTTP on POST /mcp)
 skilljack-mcp --http=3000 /path/to/skills
 # or: SKILLJACK_HTTP_PORT=3000 skilljack-mcp /path/to/skills
+
+# Deliver the skill catalog via the load-skill tool description instead of
+# server instructions (the default)
+skilljack-mcp --catalog=tool-description /path/to/skills
+# or: SKILLJACK_CATALOG=tool-description skilljack-mcp /path/to/skills
 ```
 
-**Transports:** stdio (default) or stateless HTTP (`--http[=port]`, default `3000`, or `SKILLJACK_HTTP_PORT`). HTTP serves the core skill surface (`load-skill`, `skill-resource`, `skill://` resources, `/skill` prompts) at `POST /mcp`. Because it is stateless, it does not push `listChanged`/`resources/updated` notifications — skills are read at startup; restart to pick up changes. Use stdio for the dynamic-refresh and MCP-Apps UI features.
+**Transports:** stdio (default) or stateless HTTP (`--http[=port]`, default `3000`, or `SKILLJACK_HTTP_PORT`). HTTP serves the core skill surface (`load-skill`, `skill-resource`, `skill://` resources, `/skill` prompts) at `POST /mcp`. Discovery-on-change works the same as stdio — file watchers and remote-source polling keep the skill state fresh, and every request (including each new client's `initialize`) reads it. Because the transport is stateless it does not *push* `listChanged`/`resources/updated` notifications: already-connected clients see changes on their next request or reconnect. The MCP-Apps configuration UI is stdio-only.
+
+**Catalog channel:** `--catalog=<instructions|tool-description>` (or `SKILLJACK_CATALOG`) picks which single channel delivers the `<available_skills>` catalog — never both. `instructions` (default): server `instructions`, sent in the `initialize` handshake so it survives tool-search deferral; on stdio it is frozen at startup — skill changes need a restart (over HTTP, newly connecting clients always get a current catalog). `tool-description`: the `load-skill` tool description, dynamic via `tools/listChanged` but invisible to clients that defer MCP tool descriptions (e.g. Claude Code tool search).
 
 ## Configuration and Skills Display UI
 

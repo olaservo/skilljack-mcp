@@ -9,7 +9,7 @@ vi.mock("./skill-config.js", () => ({
 }));
 
 // Import after mocking
-import { classifyPaths, getStaticMode } from "./index.js";
+import { classifyPaths, getStaticMode, getCatalogMode } from "./index.js";
 import { getStaticModeFromConfig } from "./skill-config.js";
 
 describe("classifyPaths", () => {
@@ -102,5 +102,62 @@ describe("getStaticMode", () => {
     process.argv = ["node", "script.js"];
     process.env.SKILLJACK_STATIC = "TRUE";
     expect(getStaticMode()).toBe(true);
+  });
+});
+
+describe("getCatalogMode", () => {
+  const originalArgv = process.argv;
+  const originalEnv = process.env.SKILLJACK_CATALOG;
+
+  beforeEach(() => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    process.argv = originalArgv;
+    if (originalEnv === undefined) {
+      delete process.env.SKILLJACK_CATALOG;
+    } else {
+      process.env.SKILLJACK_CATALOG = originalEnv;
+    }
+  });
+
+  it("defaults to instructions when nothing is set", () => {
+    process.argv = ["node", "script.js"];
+    delete process.env.SKILLJACK_CATALOG;
+    expect(getCatalogMode()).toBe("instructions");
+  });
+
+  it("reads --catalog=instructions from argv", () => {
+    process.argv = ["node", "script.js", "--catalog=instructions"];
+    expect(getCatalogMode()).toBe("instructions");
+  });
+
+  it("reads --catalog=tool-description from argv", () => {
+    process.argv = ["node", "script.js", "--catalog=tool-description"];
+    expect(getCatalogMode()).toBe("tool-description");
+  });
+
+  it("reads SKILLJACK_CATALOG env var", () => {
+    process.argv = ["node", "script.js"];
+    process.env.SKILLJACK_CATALOG = "instructions";
+    expect(getCatalogMode()).toBe("instructions");
+  });
+
+  it("prefers CLI flag over env var", () => {
+    process.argv = ["node", "script.js", "--catalog=tool-description"];
+    process.env.SKILLJACK_CATALOG = "instructions";
+    expect(getCatalogMode()).toBe("tool-description");
+  });
+
+  it("is case insensitive", () => {
+    process.argv = ["node", "script.js", "--catalog=INSTRUCTIONS"];
+    expect(getCatalogMode()).toBe("instructions");
+  });
+
+  it("warns and falls back to instructions on unknown values", () => {
+    process.argv = ["node", "script.js", "--catalog=both"];
+    expect(getCatalogMode()).toBe("instructions");
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("Unknown catalog mode"));
   });
 });

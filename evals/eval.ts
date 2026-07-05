@@ -9,12 +9,14 @@ import {
   SessionLogger
 } from "./lib/metrics.js";
 import { analyzeSession, printEvalResult, EvalConfig } from "./lib/eval-checker.js";
-import { buildOptions, cleanupLocalSkills, cleanupEvalServers, EvalMode } from "./lib/options-builder.js";
+import { buildOptions, cleanupLocalSkills, cleanupEvalServers, EvalMode, CatalogMode, ToolSearchSetting } from "./lib/options-builder.js";
 
 interface CLIArgs {
   task: string;
   mode: EvalMode;
   model?: string;
+  catalog?: CatalogMode;
+  toolSearch: ToolSearchSetting;
 }
 
 interface TaskConfig {
@@ -28,6 +30,8 @@ function parseArgs(): CLIArgs {
   let task = "greeting"; // default
   let mode: EvalMode = "mcp"; // default
   let model: string | undefined;
+  let catalog: CatalogMode | undefined;
+  let toolSearch: ToolSearchSetting = "off"; // default = pre-existing behavior
 
   for (const arg of args) {
     if (arg.startsWith("--task=")) {
@@ -42,6 +46,22 @@ function parseArgs(): CLIArgs {
       }
     } else if (arg.startsWith("--model=")) {
       model = arg.split("=")[1];
+    } else if (arg.startsWith("--catalog=")) {
+      const catalogArg = arg.split("=")[1];
+      if (catalogArg === "tool-description" || catalogArg === "instructions") {
+        catalog = catalogArg;
+      } else {
+        console.error(`Invalid catalog mode: ${catalogArg}. Use 'tool-description' or 'instructions'.`);
+        process.exit(1);
+      }
+    } else if (arg.startsWith("--tool-search=")) {
+      const tsArg = arg.split("=")[1];
+      if (tsArg === "on" || tsArg === "off") {
+        toolSearch = tsArg;
+      } else {
+        console.error(`Invalid tool-search setting: ${tsArg}. Use 'on' or 'off'.`);
+        process.exit(1);
+      }
     } else if (arg === "--help" || arg === "-h") {
       console.log(`
 Usage: tsx evals/eval.ts [options]
@@ -55,6 +75,13 @@ Options:
                        cli-local: Use Claude Code CLI directly (non-interactive)
                        mcp+local: Both MCP server AND local skills enabled
   --model=<model-id>   Specify the Claude model to use
+  --catalog=<tool-description|instructions>
+                       Skilljack catalog delivery channel (MCP modes only;
+                       passed to the server as --catalog. Default: server
+                       default, i.e. instructions)
+  --tool-search=<on|off>  Agent SDK tool search / deferred tool loading
+                       (default: off. The tool-description catalog requires
+                       off; --catalog=instructions is the experiment for on)
   --help, -h           Show this help message
 
 Examples:
@@ -64,12 +91,13 @@ Examples:
   tsx evals/eval.ts --mode=mcp+local         # Run with both MCP and local skills
   tsx evals/eval.ts --task=greeting --mode=mcp
   tsx evals/eval.ts --task=code-style --mode=cli-local
+  tsx evals/eval.ts --task=code-style --mode=mcp --catalog=instructions --tool-search=on
 `);
       process.exit(0);
     }
   }
 
-  return { task, mode, model };
+  return { task, mode, model, catalog, toolSearch };
 }
 
 async function loadTask(taskName: string): Promise<TaskConfig> {
@@ -200,7 +228,7 @@ function parseCLIOutput(output: string): CLIResult {
 }
 
 async function main() {
-  const { task: taskName, mode, model } = parseArgs();
+  const { task: taskName, mode, model, catalog, toolSearch } = parseArgs();
   const startTime = Date.now();
 
   console.log("=== Skill Eval ===\n");
@@ -214,10 +242,14 @@ async function main() {
     mode,
     systemPrompt: taskConfig.systemPrompt,
     model,
-    skillsDir: './evals/skills'
+    skillsDir: './evals/skills',
+    catalog,
+    toolSearch
   });
 
   console.log(`\nMode: ${mode}`);
+  console.log(`Catalog: ${catalog ?? "(server default: instructions)"}`);
+  console.log(`Tool search: ${toolSearch}`);
   if (mode === "mcp") {
     console.log(`MCP Servers: ${Object.keys(options.mcpServers || {}).join(', ')}`);
   } else if (mode === "mcp+local") {
@@ -326,7 +358,7 @@ async function main() {
     console.log(`Human-readable log: ${logPath.replace('.json', '.md')}`);
 
     // Save result summary
-    await saveResultSummary(taskName, evalResult, logger.getSessionId(), taskConfig.evalConfig, mode);
+    await saveResultSummary(taskName, evalResult, logger.getSessionId(), taskConfig.evalConfig, mode, catalog, toolSearch);
 
     // Cleanup local skills if in local, cli-local, or mcp+local mode
     if (mode === "local" || mode === "cli-local" || mode === "mcp+local") {
@@ -347,7 +379,9 @@ async function saveResultSummary(
   evalResult: ReturnType<typeof analyzeSession>,
   sessionId: string,
   evalConfig: EvalConfig,
-  mode: EvalMode
+  mode: EvalMode,
+  catalog: CatalogMode | undefined,
+  toolSearch: ToolSearchSetting
 ): Promise<void> {
   const resultsDir = './evals/results';
   await fs.mkdir(resultsDir, { recursive: true });
@@ -361,6 +395,8 @@ async function saveResultSummary(
     timestamp: new Date().toISOString(),
     task: taskName,
     mode,
+    catalog: catalog ?? "instructions",
+    toolSearch,
     sessionId,
     passed,
     results: evalResult

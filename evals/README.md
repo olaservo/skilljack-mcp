@@ -21,9 +21,23 @@ npm run build
 On agent-sdk 0.3.x, MCP-mode evals only measure skill activation meaningfully after working around **two independent regressions** (the harness does this automatically — see `lib/options-builder.ts`):
 
 1. **stdio connect race** — the SDK connects stdio MCP servers *asynchronously*, so a stdio skilljack is still `pending` at the model's first turn and its tools are absent (upstream [anthropics/claude-code#49753](https://github.com/anthropics/claude-code/issues/49753)). The harness runs skilljack over **HTTP** (`--http=0`, ephemeral port) instead of stdio so it is `connected` on turn 1.
-2. **tool search / deferred tools** — MCP tool *descriptions* are deferred out of context, so the model never sees skilljack's `<available_skills>` catalog (which lives in the `load-skill` tool description) and won't activate. The harness sets **`ENABLE_TOOL_SEARCH=false`** so all tool definitions load into context every turn.
+2. **tool search / deferred tools** — MCP tool *descriptions* are deferred out of context, so in `--catalog=tool-description` mode the model never sees skilljack's `<available_skills>` catalog and won't activate. The default `instructions` catalog mode is immune (the catalog arrives via the `initialize` handshake), but the harness still sets **`ENABLE_TOOL_SEARCH=false`** by default for uniform tool visibility across modes; override with `--tool-search=on`.
 
-**Product caveat:** #2 means skilljack's catalog-in-the-tool-description approach only surfaces to the model when tool search is disabled. On a default modern Claude Code (tool search on), auto-activation of MCP-delivered skills is unreliable — see the disclaimer in the main docs and the tracking issue.
+### Catalog-channel knobs (`--catalog` + `--tool-search`)
+
+Skilljack delivers the skill catalog through exactly one channel: server `instructions` (default) or the `load-skill` tool description — see `--catalog=` in the main README. Server `instructions` arrive in the `initialize` handshake rather than a (deferrable) tool description, which is why they survive tool search ON. The harness exposes both knobs:
+
+```bash
+# Default catalog (instructions), tool search ENABLED — passes
+npm run eval -- --task=code-style --mode=mcp --tool-search=on
+
+# Catalog via tool description, tool search ENABLED (fails — description is deferred)
+npm run eval -- --task=code-style --mode=mcp --catalog=tool-description --tool-search=on
+```
+
+`--catalog` is passed to the spawned skilljack server (MCP modes only); `--tool-search` sets `ENABLE_TOOL_SEARCH` explicitly (both on and off) on the Agent SDK client env. Both settings are recorded in the result summary JSON.
+
+**Result (2026-07-05, agent-sdk 0.3.201, claude-sonnet-4-6):** the instructions channel survives tool search — this is why it became the default. With the default catalog (no `--catalog` flag) and `--tool-search=on`, all 3 tasks pass (code-style, template-generator, xlsx-openpyxl — all of which fail in tool-description mode with tool search on); the tool-description + tool-search-on control failed as expected; tool-description + tool-search-off also passes. Reproduced across two batches, including one exercising the HTTP discovery-on-change path.
 
 ## Running Evals
 

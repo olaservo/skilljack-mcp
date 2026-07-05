@@ -60,4 +60,101 @@ describe("stateless HTTP transport", () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
+
+  it("serves refreshed skillState to new connections (discovery-on-change)", async () => {
+    const skillPath = path.join(FIXTURES_DIR, "valid-skill", "SKILL.md");
+    const state = createTestSkillState([
+      createTestSkill({
+        name: "first-skill",
+        baseName: "first-skill",
+        path: skillPath,
+        source: BUNDLED_SKILL_SOURCE,
+      }),
+    ]);
+    const server = await startHttpServer(0, state);
+    const url = new URL(`http://127.0.0.1:${portOf(server)}/mcp`);
+
+    async function instructionsSeenByNewClient(): Promise<string | undefined> {
+      const client = new Client({ name: "test-client", version: "0.0.1" });
+      const transport = new StreamableHTTPClientTransport(url);
+      try {
+        await client.connect(transport);
+        return client.getInstructions();
+      } finally {
+        await client.close().catch(() => {});
+        await transport.close().catch(() => {});
+      }
+    }
+
+    try {
+      expect(await instructionsSeenByNewClient()).toContain("<name>first-skill</name>");
+
+      // Simulate what refreshSkillState() does on a file change: swap the map.
+      const added = createTestSkill({
+        name: "second-skill",
+        baseName: "second-skill",
+        path: skillPath,
+        source: BUNDLED_SKILL_SOURCE,
+      });
+      state.skillMap = new Map([
+        ...state.skillMap,
+        [added.name, added],
+      ]);
+
+      const instructions = await instructionsSeenByNewClient();
+      expect(instructions).toContain("<name>first-skill</name>");
+      expect(instructions).toContain("<name>second-skill</name>");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  describe("catalog modes", () => {
+    function makeState() {
+      const skillPath = path.join(FIXTURES_DIR, "valid-skill", "SKILL.md");
+      return createTestSkillState([
+        createTestSkill({
+          name: "test-skill",
+          baseName: "test-skill",
+          path: skillPath,
+          source: BUNDLED_SKILL_SOURCE,
+        }),
+      ]);
+    }
+
+    async function connectAndInspect(catalogMode?: "tool-description" | "instructions") {
+      const server = await startHttpServer(0, makeState(), catalogMode);
+      const client = new Client({ name: "test-client", version: "0.0.1" });
+      const transport = new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${portOf(server)}/mcp`)
+      );
+      try {
+        await client.connect(transport);
+        const instructions = client.getInstructions();
+        const tools = await client.listTools();
+        const loadSkillDesc = tools.tools.find((t) => t.name === "load-skill")?.description ?? "";
+        return { instructions, loadSkillDesc };
+      } finally {
+        await client.close().catch(() => {});
+        await transport.close().catch(() => {});
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    }
+
+    it("tool-description: no instructions, catalog in tool description", async () => {
+      const { instructions, loadSkillDesc } = await connectAndInspect("tool-description");
+      expect(instructions).toBeUndefined();
+      expect(loadSkillDesc).toContain("<name>test-skill</name>");
+    });
+
+    it("instructions (default): catalog + load-skill usage in instructions, usage-only tool description", async () => {
+      for (const mode of ["instructions", undefined] as const) {
+        const { instructions, loadSkillDesc } = await connectAndInspect(mode);
+        expect(instructions).toContain("<name>test-skill</name>");
+        expect(instructions).toContain("`load-skill`");
+        expect(loadSkillDesc).toContain("Load a skill");
+        expect(loadSkillDesc).not.toContain("<available_skills>");
+      }
+    });
+  });
 });

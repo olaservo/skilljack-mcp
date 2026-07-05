@@ -21,11 +21,13 @@ CI (`.github/workflows/ci.yml`) runs `npm ci`, `npm run build`, and `npm test` o
 - `WELL_KNOWN_MAX_UNPACKED_MB` - Archive uncompressed size cap (default 50)
 - `WELL_KNOWN_ALLOW_HTTP` - `1`/`true`/`yes` to permit `http://` origins (dev only)
 - `SKILLJACK_HTTP_PORT` / `SKILLJACK_HTTP` - Serve over stateless HTTP instead of stdio (port, default 3000)
+- `SKILLJACK_CATALOG` - Catalog delivery channel: `instructions` (default) | `tool-description` — exactly one, never both
 
 **CLI Options:**
 - Positional args: Skill directories, GitHub URLs, or well-known publisher URLs (e.g. `https://example.com/.well-known/agent-skills/`)
 - `--static`: Enable static mode (freeze skills at startup, no file watching)
 - `--http` / `--http=<port>`: Serve over stateless Streamable HTTP at `POST /mcp` instead of stdio (single token so it isn't parsed as a skill dir)
+- `--catalog=<instructions|tool-description>`: Which single channel carries the `<available_skills>` catalog (never both). `instructions` (default): server `instructions` — survives tool search, but frozen at startup on stdio since the SDK can't update instructions. `tool-description`: the `load-skill` tool description — dynamic via `tools/listChanged`, but deferred out of context by tool search. Env: `SKILLJACK_CATALOG`. See `getCatalogMode()` in index.ts / `CatalogMode` in skill-tool.ts.
 
 ## Project Structure
 
@@ -78,7 +80,7 @@ Packaging: `manifest.json` + `.mcpbignore` define the `.mcpb` bundle (MCP Bundle
 1. **Startup discovery**: Skills discovered from configured directories at startup (supports multiple)
 2. **File watching**: chokidar watches skill directories for SKILL.md changes
 3. **Dynamic refresh**: On file change → re-discover → update tool/prompts → send notifications
-4. **Tool description**: Skill metadata embedded in `load-skill` tool description, refreshable via `tools/listChanged`
+4. **Catalog delivery**: `<available_skills>` catalog in server `instructions` (default; sent at `initialize`, frozen until restart on stdio) or in the `load-skill` tool description (`--catalog=tool-description`; refreshable via `tools/listChanged`) — exactly one channel, never both
 5. **Prompts**: `/skill` prompt with auto-completion + per-skill prompts, refreshable via `prompts/listChanged`
 6. **Progressive disclosure**: Full SKILL.md loaded on demand via `load-skill` tool or prompts
 7. **MCP SDK patterns**: Uses `McpServer`, `ResourceTemplate`, `completable()`, Zod schemas
@@ -88,6 +90,7 @@ Packaging: `manifest.json` + `.mcpbignore` define the `.mcpb` bundle (MCP Bundle
 | Function | File | Purpose |
 |----------|------|---------|
 | `getStaticMode()` | index.ts | Check if static mode is enabled (CLI/env) |
+| `getCatalogMode()` | index.ts | Resolve the catalog channel (`--catalog=` / `SKILLJACK_CATALOG`, default `instructions`) |
 | `discoverSkillsFromDirs()` | index.ts | Scan directories for skills |
 | `refreshSkills()` | index.ts | Re-discover + update tool/prompts + notify clients |
 | `watchSkillDirectories()` | index.ts | Set up chokidar watchers (skipped in static mode) |
@@ -97,7 +100,9 @@ Packaging: `manifest.json` + `.mcpbignore` define the `.mcpb` bundle (MCP Bundle
 | `parseSkillResourceUri()` | skill-discovery.ts | Resolve a `skill://` URI back to a skill + file relpath |
 | `buildSkillIndex()` | skill-discovery.ts | Build the JSON document served at `skill://index.json` |
 | `generateInstructions()` | skill-discovery.ts | Create XML skill list |
-| `getToolDescription()` | skill-tool.ts | Usage text + skill list for tool desc |
+| `getToolDescription()` | skill-tool.ts | Tool desc: usage text (+ skill list in tool-description mode) |
+| `getServerInstructions()` | skill-tool.ts | Server `instructions` for a catalog mode (undefined in tool-description mode) |
+| `getCatalogInstructions()` | skill-tool.ts | Usage preamble + skill list for instructions mode |
 | `registerSkillPrompts()` | skill-prompts.ts | Register /skill + per-skill prompts |
 | `refreshPrompts()` | skill-prompts.ts | Update prompts when skills change |
 | `getPromptDescription()` | skill-prompts.ts | Usage text + skill list for prompt desc |
@@ -175,8 +180,8 @@ The resource layer follows [SEP-2640 (Skills Extension)](https://github.com/mode
 ## Conventions
 
 - ES modules (`.js` extensions in imports)
-- **Tool search / deferred tools limitation:** the skill catalog lives in the `load-skill` tool *description* (`getToolDescription`). Clients with tool search / deferred tool loading enabled (default on modern Claude Code) defer MCP tool descriptions out of context, so the model never sees the catalog and won't auto-activate — activation needs `ENABLE_TOOL_SEARCH=false`. Do NOT "fix" this by also stuffing the catalog into server `instructions`: instructions (static) and the tool description (dynamic) are deliberately independent, and `instructions` is becoming more optional in the spec. Making the dynamic catalog work under tool search is an open product problem (tracking issue).
-- Transports: stdio (default, full dynamic refresh + UI config/display tools) or stateless HTTP (`--http`, core skill surface only, per-request `StreamableHTTPServerTransport({ sessionIdGenerator: undefined })`, no push notifications). `main()` branches to `startHttpServer()` right after startup discovery.
+- **Tool search / deferred tools:** the skill catalog is delivered through exactly ONE channel, selected by `--catalog=` / `SKILLJACK_CATALOG` (never both simultaneously). In the default `instructions` mode the catalog arrives via the `initialize` handshake and **survives tool search** (verified by evals 2026-07-05: 3/3 previously-failing tasks pass with instructions + tool search on), at the cost of being frozen at startup on stdio (the SDK cannot update instructions after construction). On HTTP the catalog stays fresh for *new* connections: file watchers/polling update skillState and instructions are regenerated per request — but MCP only delivers instructions at `initialize`, so already-connected clients see catalog changes only after reconnecting. In `tool-description` mode the catalog is dynamic via `tools/listChanged`, but clients with tool search / deferred tool loading enabled (default on modern Claude Code) defer MCP tool descriptions out of context, so the model never sees it and won't auto-activate — that mode needs `ENABLE_TOOL_SEARCH=false`. Issue #78 tracks the remaining questions (dynamic refresh under instructions mode, caching/cost).
+- Transports: stdio (default, full dynamic refresh + UI config/display tools) or stateless HTTP (`--http`, core skill surface only, per-request `StreamableHTTPServerTransport({ sessionIdGenerator: undefined })`, no push notifications). `main()` branches to `startHttpServer()` right after startup discovery, first wiring the same file watchers + remote polling as stdio to a state-only refresh (`refreshSkillState`) — requests read skillState fresh, clients just aren't notified.
 - Errors logged to stderr (stdout is MCP protocol)
 - Security: path traversal checks via `isPathWithinBase()`
 - File size limit: 1MB default (`MAX_FILE_SIZE_MB` env var to configure)

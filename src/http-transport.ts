@@ -8,28 +8,37 @@
  * between requests.
  *
  * Limitation: stateless mode has no server->client stream, so listChanged /
- * resources/updated notifications are not delivered. Skills are read from the
- * skillState captured at startup; restart to pick up on-disk changes. The
- * default stdio transport keeps full dynamic-refresh behavior.
+ * resources/updated notifications are not delivered. Discovery-on-change still
+ * works: main() runs the same file watchers / remote polling as stdio and swaps
+ * skillState, and every request reads that state fresh — but clients are not
+ * *told* about changes; they see them on their next request (or, for the
+ * instructions catalog, their next initialize/reconnect).
  */
 
 import * as http from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { registerSkillTool, SkillState } from "./skill-tool.js";
+import { registerSkillTool, getServerInstructions, SkillState, CatalogMode } from "./skill-tool.js";
 import { registerSkillResources } from "./skill-resources.js";
 import { registerSkillPrompts } from "./skill-prompts.js";
-import { generateInstructions, getModelInvocableSkills } from "./skill-discovery.js";
 
 /**
  * Build a fresh McpServer exposing the core skill surface for one request.
  *
  * listChanged/subscribe are advertised as false: stateless HTTP cannot push
  * notifications, so promising them would be dishonest.
+ *
+ * catalogMode picks which single channel carries the skill catalog (tool
+ * description or server instructions — see CatalogMode). Instructions are
+ * regenerated from the current skillState on every request (unlike stdio,
+ * where the SDK freezes them at construction), so newly connecting clients
+ * see skill changes picked up by the watchers in main().
  */
-export function buildCoreServer(skillState: SkillState): McpServer {
-  const skills = Array.from(skillState.skillMap.values());
-  const instructions = generateInstructions(getModelInvocableSkills(skills));
+export function buildCoreServer(
+  skillState: SkillState,
+  catalogMode: CatalogMode = "instructions"
+): McpServer {
+  const instructions = getServerInstructions(skillState, catalogMode);
 
   const server = new McpServer(
     { name: "skilljack-mcp", version: "1.0.0" },
@@ -43,11 +52,11 @@ export function buildCoreServer(skillState: SkillState): McpServer {
           "io.modelcontextprotocol/skills": {},
         },
       },
-      instructions,
+      ...(instructions !== undefined && { instructions }),
     }
   );
 
-  registerSkillTool(server, skillState);
+  registerSkillTool(server, skillState, catalogMode);
   registerSkillResources(server, skillState);
   registerSkillPrompts(server, skillState);
 
@@ -61,7 +70,11 @@ const JSONRPC_ERROR = (code: number, message: string) =>
  * Start a stateless Streamable HTTP MCP server on the given port.
  * Resolves with the listening http.Server once it is accepting connections.
  */
-export async function startHttpServer(port: number, skillState: SkillState): Promise<http.Server> {
+export async function startHttpServer(
+  port: number,
+  skillState: SkillState,
+  catalogMode: CatalogMode = "instructions"
+): Promise<http.Server> {
   const httpServer = http.createServer(async (req, res) => {
     const url = req.url ?? "";
     if (req.method !== "POST" || !(url === "/mcp" || url.startsWith("/mcp?"))) {
@@ -71,7 +84,7 @@ export async function startHttpServer(port: number, skillState: SkillState): Pro
     }
 
     // Fresh server + transport per request (stateless).
-    const server = buildCoreServer(skillState);
+    const server = buildCoreServer(skillState, catalogMode);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => {
       transport.close();
