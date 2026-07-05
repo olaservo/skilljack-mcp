@@ -175,6 +175,7 @@ The resource layer follows [SEP-2640 (Skills Extension)](https://github.com/mode
 ## Conventions
 
 - ES modules (`.js` extensions in imports)
+- **Tool search / deferred tools limitation:** the skill catalog lives in the `load-skill` tool *description* (`getToolDescription`). Clients with tool search / deferred tool loading enabled (default on modern Claude Code) defer MCP tool descriptions out of context, so the model never sees the catalog and won't auto-activate — activation needs `ENABLE_TOOL_SEARCH=false`. Do NOT "fix" this by also stuffing the catalog into server `instructions`: instructions (static) and the tool description (dynamic) are deliberately independent, and `instructions` is becoming more optional in the spec. Making the dynamic catalog work under tool search is an open product problem (tracking issue).
 - Transports: stdio (default, full dynamic refresh + UI config/display tools) or stateless HTTP (`--http`, core skill surface only, per-request `StreamableHTTPServerTransport({ sessionIdGenerator: undefined })`, no push notifications). `main()` branches to `startHttpServer()` right after startup discovery.
 - Errors logged to stderr (stdout is MCP protocol)
 - Security: path traversal checks via `isPathWithinBase()`

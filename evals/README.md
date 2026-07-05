@@ -16,6 +16,15 @@ npm install
 npm run build
 ```
 
+## MCP-mode setup (important)
+
+On agent-sdk 0.3.x, MCP-mode evals only measure skill activation meaningfully after working around **two independent regressions** (the harness does this automatically — see `lib/options-builder.ts`):
+
+1. **stdio connect race** — the SDK connects stdio MCP servers *asynchronously*, so a stdio skilljack is still `pending` at the model's first turn and its tools are absent (upstream [anthropics/claude-code#49753](https://github.com/anthropics/claude-code/issues/49753)). The harness runs skilljack over **HTTP** (`--http=0`, ephemeral port) instead of stdio so it is `connected` on turn 1.
+2. **tool search / deferred tools** — MCP tool *descriptions* are deferred out of context, so the model never sees skilljack's `<available_skills>` catalog (which lives in the `load-skill` tool description) and won't activate. The harness sets **`ENABLE_TOOL_SEARCH=false`** so all tool definitions load into context every turn.
+
+**Product caveat:** #2 means skilljack's catalog-in-the-tool-description approach only surfaces to the model when tool search is disabled. On a default modern Claude Code (tool search on), auto-activation of MCP-delivered skills is unreliable — see the disclaimer in the main docs and the tracking issue.
+
 ## Running Evals
 
 ```bash

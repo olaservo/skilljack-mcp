@@ -239,7 +239,9 @@ export function getHttpPort(): number | null {
 
   if (flag && flag.startsWith("--http=")) {
     const p = parseInt(flag.slice("--http=".length), 10);
-    if (!Number.isNaN(p) && p > 0) return p;
+    // `>= 0` so `--http=0` binds an OS-assigned (ephemeral) port; the "ready"
+    // log line reports the actual port.
+    if (!Number.isNaN(p) && p >= 0) return p;
   }
   const envPort = parseInt(envPortRaw ?? "", 10);
   if (!Number.isNaN(envPort) && envPort > 0) return envPort;

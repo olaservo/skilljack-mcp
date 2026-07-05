@@ -9,7 +9,7 @@ import {
   SessionLogger
 } from "./lib/metrics.js";
 import { analyzeSession, printEvalResult, EvalConfig } from "./lib/eval-checker.js";
-import { buildOptions, cleanupLocalSkills, EvalMode } from "./lib/options-builder.js";
+import { buildOptions, cleanupLocalSkills, cleanupEvalServers, EvalMode } from "./lib/options-builder.js";
 
 interface CLIArgs {
   task: string;
@@ -332,6 +332,9 @@ async function main() {
     if (mode === "local" || mode === "cli-local" || mode === "mcp+local") {
       await cleanupLocalSkills();
     }
+
+    // Tear down any skilljack HTTP servers spawned for MCP-mode evals.
+    cleanupEvalServers();
 
     if (error) {
       throw error;

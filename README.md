@@ -2,6 +2,8 @@
 
 An MCP server that jacks [Agent Skills](https://agentskills.io) directly into your LLM's brain.
 
+> ⚠️ **Heads up — tool search / deferred tools.** Skilljack surfaces its skill catalog through the `load-skill` **tool description**. Clients with **tool search / deferred tool loading** on (the default on modern Claude Code) don't load MCP tool descriptions into context up front, so the model won't reliably auto-activate skilljack skills. Set `ENABLE_TOOL_SEARCH=false` to use automatic activation today. Working with tool search enabled is an open item.
+
 ## Installation
 
 ```bash

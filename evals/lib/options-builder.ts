@@ -1,8 +1,76 @@
 // Options builder for skill evals
 import * as path from "path";
 import * as fs from "fs/promises";
+import { spawn, ChildProcess } from "child_process";
 
 export type EvalMode = "mcp" | "local" | "cli-local" | "mcp+local";
+
+/**
+ * skilljack HTTP servers spawned for MCP-mode evals. Tracked so eval.ts can
+ * tear them down after each run via cleanupEvalServers().
+ */
+const spawnedHttpServers: ChildProcess[] = [];
+
+/**
+ * Start skilljack over stateless HTTP on an ephemeral port and resolve its
+ * `POST /mcp` URL once it is ready.
+ *
+ * MCP-mode evals use HTTP (not stdio) so the server is `connected` on the
+ * model's first turn — the agent-sdk 0.3.x stdio connect race leaves a
+ * stdio server `pending` and its tools absent turn 1. See evals/README.md.
+ */
+async function startSkilljackHttp(skillsDir: string): Promise<string> {
+  const serverPath = path.resolve("./dist/index.js");
+  try {
+    await fs.access(serverPath);
+  } catch {
+    throw new Error(`Skilljack MCP server not found at ${serverPath}. Run 'npm run build' first.`);
+  }
+  const absoluteSkillsDir = path.resolve(skillsDir);
+  const proc = spawn("node", [serverPath, "--http=0", absoluteSkillsDir], {
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  spawnedHttpServers.push(proc);
+
+  return await new Promise<string>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("skilljack HTTP start timeout")), 15000);
+    let buf = "";
+    proc.stderr!.on("data", (d) => {
+      buf += String(d);
+      const m = buf.match(/http:\/\/localhost:(\d+)\/mcp/);
+      if (m) {
+        clearTimeout(timeout);
+        resolve(`http://127.0.0.1:${m[1]}/mcp`);
+      }
+    });
+    proc.on("exit", (code) => {
+      clearTimeout(timeout);
+      reject(new Error(`skilljack HTTP server exited early (code ${code})`));
+    });
+  });
+}
+
+/** Kill any skilljack HTTP servers spawned for evals. Call in eval.ts finally. */
+export function cleanupEvalServers(): void {
+  for (const proc of spawnedHttpServers) {
+    try {
+      proc.kill();
+    } catch {
+      // already gone
+    }
+  }
+  spawnedHttpServers.length = 0;
+}
+
+/**
+ * ENABLE_TOOL_SEARCH=false loads all tool definitions (incl. skilljack's
+ * load-skill tool description, which carries the <available_skills> catalog)
+ * into context every turn. With tool search ON (default), MCP tool descriptions
+ * are DEFERRED out of context, so the model never sees the skill catalog and
+ * won't activate. Skilljack's catalog-in-tool-description method requires this
+ * to be off. See evals/README.md.
+ */
+const TOOL_SEARCH_OFF_ENV = { ENABLE_TOOL_SEARCH: "false" as const };
 
 export interface BuildOptionsConfig {
   mode: EvalMode;
@@ -111,19 +179,19 @@ export async function buildOptions(config: BuildOptionsConfig): Promise<any> {
   // A minimal string prompt is used for all modes (not the `claude_code`
   // preset).
   //
-  // KNOWN ISSUE — MCP-mode activation on agent-sdk 0.3.x:
-  // In MCP mode the model frequently fails to call the skilljack skill tool.
-  // Root cause (verified 2026-07-05 via an init-message probe + a controlled
-  // 2x2): agent-sdk 0.3.x connects stdio MCP servers *asynchronously*, so the
-  // skilljack server is still `pending` at the SDK init message and its tools
-  // are absent from the tool list the model sees on its first turn — the model
-  // answers directly before skilljack finishes connecting. On 0.1.x the server
-  // connected synchronously before the first turn and activation worked.
-  // It is NOT the system prompt, NOT the `claude_code` preset (forcing the
-  // preset on 0.3.x still fails to activate), and NOT allowedTools. Local/native
-  // mode is unaffected because the native Skill tool is present on turn 1.
-  // Fix options: pin evals to a 0.1.x SDK, wait for MCP connection before the
-  // first query if the SDK exposes a hook, or fix upstream.
+  // MCP-mode activation on agent-sdk 0.3.x required working around TWO
+  // independent regressions (verified 2026-07-05 by controlled experiments):
+  //   A) stdio connect race — the SDK connects stdio MCP servers asynchronously,
+  //      so a stdio skilljack is still `pending` at init and its tools are absent
+  //      on the model's first turn (upstream anthropics/claude-code#49753).
+  //      → Fixed here by running skilljack over HTTP (startSkilljackHttp), which
+  //        is `connected` on turn 1.
+  //   B) tool search / deferred tools — MCP tool DESCRIPTIONS are deferred out of
+  //      context, so the model never sees skilljack's <available_skills> catalog
+  //      (which lives in the load-skill tool description) and won't activate.
+  //      → Fixed here by ENABLE_TOOL_SEARCH=false (TOOL_SEARCH_OFF_ENV).
+  // Both are needed together for clean activation. It is NOT the system prompt,
+  // NOT the claude_code preset, and NOT allowedTools.
   const MINIMAL_SYSTEM_PROMPT =
     "You are a helpful assistant. Use the tools available to you to complete the user's request.";
   const effectiveSystemPrompt = systemPrompt
@@ -156,63 +224,47 @@ export async function buildOptions(config: BuildOptionsConfig): Promise<any> {
       settingSources: ['project' as const],
       allowedTools: ["Bash", "Read", "Write", "Skill"],
       permissionMode: "default" as const,
-      model: modelId
+      model: modelId,
+      // Uniform tool visibility across modes (the native Skill tool can also be
+      // deferred under tool search); keeps cross-mode comparisons apples-to-apples.
+      env: { ...process.env, ...TOOL_SEARCH_OFF_ENV }
     };
   } else if (mode === "mcp+local") {
-    // Combined mode: both MCP server AND local skills enabled
-    // Tests behavior when both skill delivery mechanisms are available
+    // Combined mode: both MCP server (over HTTP) AND local skills enabled.
+    // Tests which delivery the agent prefers when both are available.
     await setupLocalSkills(skillsDir);
     await ensureSettingsJson();
 
-    const absoluteSkillsDir = path.resolve(skillsDir);
-    const serverPath = path.resolve('./dist/index.js');
-
-    // Verify server exists
-    try {
-      await fs.access(serverPath);
-    } catch {
-      throw new Error(`Skilljack MCP server not found at ${serverPath}. Run 'npm run build' first.`);
-    }
+    const url = await startSkilljackHttp(skillsDir);
 
     options = {
       cwd: process.cwd(),
       mcpServers: {
-        skilljack: {
-          command: "node",
-          args: [serverPath, absoluteSkillsDir]
-        }
+        skilljack: { type: "http" as const, url }
       },
       systemPrompt: effectiveSystemPrompt,
       settingSources: ['project' as const],
       // Allow both MCP and local skill tools
       allowedTools: ["Bash", "Read", "Write", "Skill", "mcp__skilljack"],
       permissionMode: "default" as const,
-      model: modelId
+      model: modelId,
+      env: { ...process.env, ...TOOL_SEARCH_OFF_ENV }
     };
   } else {
-    // MCP mode: use skilljack server only
-    const absoluteSkillsDir = path.resolve(skillsDir);
-    const serverPath = path.resolve('./dist/index.js');
-
-    // Verify server exists
-    try {
-      await fs.access(serverPath);
-    } catch {
-      throw new Error(`Skilljack MCP server not found at ${serverPath}. Run 'npm run build' first.`);
-    }
+    // MCP mode: skilljack over HTTP (avoids the stdio connect race, regression A)
+    // + tool search off (surfaces the tool-description catalog, regression B).
+    const url = await startSkilljackHttp(skillsDir);
 
     options = {
       cwd: process.cwd(),
       mcpServers: {
-        skilljack: {
-          command: "node",
-          args: [serverPath, absoluteSkillsDir]
-        }
+        skilljack: { type: "http" as const, url }
       },
       systemPrompt: effectiveSystemPrompt,
       allowedTools: ["mcp__skilljack"],
       permissionMode: "default" as const,
-      model: modelId
+      model: modelId,
+      env: { ...process.env, ...TOOL_SEARCH_OFF_ENV }
     };
   }
 
