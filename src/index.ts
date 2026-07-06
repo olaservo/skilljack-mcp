@@ -239,6 +239,23 @@ export function getCatalogMode(): CatalogMode {
 }
 
 /**
+ * One-time startup warning for the legacy tool-description catalog channel.
+ * Called from main() (not getCatalogMode(), which runs again on refresh and
+ * per HTTP request) so it prints exactly once per process.
+ */
+export function warnIfLegacyCatalogMode(mode: CatalogMode): void {
+  if (mode !== "tool-description") {
+    return;
+  }
+  console.error(
+    "Warning: --catalog=tool-description is a legacy escape hatch and not recommended. " +
+      "Clients with tool search / deferred tool loading enabled (the modern Claude Code default) keep the load-skill description — and the skill catalog inside it — out of model context, so skills won't auto-activate unless the client sets ENABLE_TOOL_SEARCH=false. " +
+      "Each catalog refresh also invalidates the client's entire prompt cache, since tool definitions sit at the top of the cached prompt prefix. " +
+      "Prefer the default instructions mode. See https://github.com/olaservo/skilljack-mcp/issues/78"
+  );
+}
+
+/**
  * Resolve the HTTP port if HTTP transport is requested, else null (stdio).
  *
  * Enabled via `--http` / `--http=<port>` (single token so it isn't parsed as a
@@ -808,6 +825,7 @@ async function main() {
   // stdio-only.
   const httpPort = getHttpPort();
   const catalogMode = getCatalogMode();
+  warnIfLegacyCatalogMode(catalogMode);
   if (httpPort !== null) {
     if (!isStatic) {
       if (currentSkillsDirs.length > 0) {

@@ -9,7 +9,7 @@ vi.mock("./skill-config.js", () => ({
 }));
 
 // Import after mocking
-import { classifyPaths, getStaticMode, getCatalogMode } from "./index.js";
+import { classifyPaths, getStaticMode, getCatalogMode, warnIfLegacyCatalogMode } from "./index.js";
 import { getStaticModeFromConfig } from "./skill-config.js";
 
 describe("classifyPaths", () => {
@@ -159,5 +159,23 @@ describe("getCatalogMode", () => {
     process.argv = ["node", "script.js", "--catalog=both"];
     expect(getCatalogMode()).toBe("instructions");
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("Unknown catalog mode"));
+  });
+});
+
+describe("warnIfLegacyCatalogMode", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  it("warns on stderr for tool-description mode", () => {
+    warnIfLegacyCatalogMode("tool-description");
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("legacy escape hatch and not recommended")
+    );
+  });
+
+  it("stays silent for instructions mode", () => {
+    warnIfLegacyCatalogMode("instructions");
+    expect(console.error).not.toHaveBeenCalled();
   });
 });
