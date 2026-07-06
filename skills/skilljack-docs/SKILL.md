@@ -9,7 +9,7 @@ An MCP server that jacks [Agent Skills](https://agentskills.io) directly into yo
 
 > **Recommended:** For best results, use an MCP client that supports `tools/listChanged` notifications (e.g., Claude Code). This enables dynamic skill discovery - when skills are added or modified, the client automatically refreshes its understanding of available skills. Alternatively, use `--static` mode for predictable behavior with a fixed skill set.
 
-> **Tool search / deferred tools.** By default, skilljack delivers its skill catalog via MCP **server instructions**, which arrive in the `initialize` handshake and reach the model even when **tool search / deferred tool loading** is enabled (the default on modern Claude Code, ~2.1.x) — automatic skill activation works out of the box. The alternative `--catalog=tool-description` mode delivers the catalog inside the `load-skill` tool description (dynamically refreshable via `tools/listChanged`), but tool-search clients defer MCP tool descriptions out of context, so that mode requires disabling tool search (e.g. `ENABLE_TOOL_SEARCH=false`) for auto-activation. See [Catalog Delivery](#catalog-delivery).
+> **Tool search / deferred tools.** By default, skilljack delivers its skill catalog via MCP **server instructions**, which arrive in the `initialize` handshake and reach the model even when **tool search / deferred tool loading** is enabled (the default on modern Claude Code, ~2.1.x) — automatic skill activation works out of the box. The legacy `--catalog=tool-description` mode (not recommended) delivers the catalog inside the `load-skill` tool description instead, but tool-search clients defer MCP tool descriptions out of context, so that mode requires disabling tool search (e.g. `ENABLE_TOOL_SEARCH=false`) for auto-activation. See [Catalog Delivery](#catalog-delivery).
 
 ## Features
 
@@ -106,12 +106,12 @@ The `<available_skills>` catalog is delivered through exactly **one** channel, s
 # Default: catalog in server instructions (survives tool search)
 skilljack-mcp /path/to/skills
 
-# Alternative: catalog in the load-skill tool description
+# Legacy escape hatch, not recommended: catalog in the load-skill tool description
 skilljack-mcp --catalog=tool-description /path/to/skills
 ```
 
 - **`instructions`** (default) — the catalog (plus `load-skill` usage guidance) is sent as MCP server `instructions` in the `initialize` handshake. It is visible to the model even under tool search / deferred tool loading. Trade-off: on stdio, the MCP SDK sets instructions once at construction, so the catalog is **frozen until restart** — live skill add/remove won't reach connected clients. (Over HTTP, instructions are regenerated per request from the watched skill state, so *newly connecting* clients always get a current catalog; already-connected clients receive instructions only at `initialize` and see changes after reconnecting.)
-- **`tool-description`** — the catalog lives in the `load-skill` tool description and refreshes live via `tools/listChanged` when skills change. Trade-off: clients with tool search enabled defer MCP tool descriptions out of context, so the model never sees the catalog; requires `ENABLE_TOOL_SEARCH=false` for auto-activation.
+- **`tool-description`** (**not recommended** — legacy escape hatch, also used as the control condition in the evals) — the catalog lives in the `load-skill` tool description and refreshes live via `tools/listChanged` when skills change. Why it's not recommended: (1) clients with tool search enabled (the modern Claude Code default) defer MCP tool descriptions out of context, so the model never sees the catalog and auto-activation silently breaks unless the client sets `ENABLE_TOOL_SEARCH=false`; (2) its one advantage — live refresh — is a prompt-cache trap: tool definitions sit at the top of the cached prompt prefix, so every `tools/listChanged` refresh invalidates the entire prompt cache (tools + system prompt + conversation history) and re-writes it at cache-write prices; (3) measured 2026-07-06 ([issue #78](https://github.com/olaservo/skilljack-mcp/issues/78)), it has no steady-state cost advantage over `instructions` either.
 
 ### HTTP Transport
 
