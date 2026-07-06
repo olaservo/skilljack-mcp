@@ -39,6 +39,8 @@ npm run eval -- --task=code-style --mode=mcp --catalog=tool-description --tool-s
 
 **Result (2026-07-05, agent-sdk 0.3.201, claude-sonnet-4-6):** the instructions channel survives tool search — this is why it became the default. With the default catalog (no `--catalog` flag) and `--tool-search=on`, all 3 tasks pass (code-style, template-generator, xlsx-openpyxl — all of which fail in tool-description mode with tool search on); the tool-description + tool-search-on control failed as expected; tool-description + tool-search-off also passes. Reproduced across two batches, including one exercising the HTTP discovery-on-change path.
 
+**Caching/cost (2026-07-06, 8-cell matrix, 1 rep/cell):** the default (instructions + tool search ON) is also the cheapest *passing* configuration by ~3.5–6× ($0.15–0.21 vs $0.73–0.94 per run). The cost driver is `ENABLE_TOOL_SEARCH=off`, not the catalog channel: with tool search off, all tool definitions load upfront (~120–144k cache-creation tokens per run) regardless of catalog mode. Token/cache/cost metrics are persisted per run in both the session log (`evals/logs/`) and the result summary (`evals/results/`). Full table: [issue #78](https://github.com/olaservo/skilljack-mcp/issues/78).
+
 ## Running Evals
 
 ```bash

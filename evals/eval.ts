@@ -346,9 +346,10 @@ async function main() {
     printEvalResult(evalResult, taskName, taskConfig.evalConfig);
 
     // Display and save metrics (only for SDK modes)
+    let metrics: ReturnType<typeof createMetricsData> | undefined;
     if (resultMessage && mode !== "cli-local") {
       displayMetrics(resultMessage, startTime);
-      const metrics = createMetricsData(resultMessage, taskName, startTime);
+      metrics = createMetricsData(resultMessage, taskName, startTime);
       logger.setMetrics(metrics);
     }
 
@@ -358,7 +359,7 @@ async function main() {
     console.log(`Human-readable log: ${logPath.replace('.json', '.md')}`);
 
     // Save result summary
-    await saveResultSummary(taskName, evalResult, logger.getSessionId(), taskConfig.evalConfig, mode, catalog, toolSearch);
+    await saveResultSummary(taskName, evalResult, logger.getSessionId(), taskConfig.evalConfig, mode, catalog, toolSearch, metrics);
 
     // Cleanup local skills if in local, cli-local, or mcp+local mode
     if (mode === "local" || mode === "cli-local" || mode === "mcp+local") {
@@ -381,7 +382,8 @@ async function saveResultSummary(
   evalConfig: EvalConfig,
   mode: EvalMode,
   catalog: CatalogMode | undefined,
-  toolSearch: ToolSearchSetting
+  toolSearch: ToolSearchSetting,
+  metrics?: ReturnType<typeof createMetricsData>
 ): Promise<void> {
   const resultsDir = './evals/results';
   await fs.mkdir(resultsDir, { recursive: true });
@@ -399,7 +401,8 @@ async function saveResultSummary(
     toolSearch,
     sessionId,
     passed,
-    results: evalResult
+    results: evalResult,
+    metrics
   };
 
   const filename = `${sessionId}.json`;
