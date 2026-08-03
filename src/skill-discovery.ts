@@ -8,7 +8,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parse as parseYaml } from "yaml";
-import type { Annotations } from "@modelcontextprotocol/sdk/types.js";
+import type { Annotations } from "@modelcontextprotocol/server";
 
 /**
  * Source information for a skill.

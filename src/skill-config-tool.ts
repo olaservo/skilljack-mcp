@@ -10,13 +10,12 @@
 import * as fs from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { CallToolResult, ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
+import { McpServer, CallToolResult, ReadResourceResult } from "@modelcontextprotocol/server";
 import {
   registerAppTool,
   registerAppResource,
   RESOURCE_MIME_TYPE,
-} from "@modelcontextprotocol/ext-apps/server";
+} from "./ui-meta.js";
 import { z } from "zod";
 import {
   getAllDirectoriesWithSources,
@@ -69,18 +68,31 @@ function getUIPath(): string {
 }
 
 /**
- * Schema shape for add-directory tool input.
+ * Input schema for the add-directory tool.
  */
-const AddDirectoryInputSchema = {
+const AddDirectoryInputSchema = z.object({
   directory: z.string().describe("Absolute path to the skills directory to add"),
-};
+});
 
 /**
- * Schema shape for remove-directory tool input.
+ * Input schema for the remove-directory tool.
  */
-const RemoveDirectoryInputSchema = {
+const RemoveDirectoryInputSchema = z.object({
   directory: z.string().describe("Absolute path to the skills directory to remove"),
-};
+});
+
+/**
+ * Output schema fragment describing one configured skills directory.
+ * Shared by every skill-config tool that returns the directory list.
+ */
+const DirectoryOutputSchema = z.object({
+  path: z.string(),
+  source: z.string(),
+  type: z.string(),
+  valid: z.boolean(),
+  allowed: z.boolean(),
+  skillCount: z.number().optional(),
+});
 
 /**
  * Callback type for when directories or GitHub settings change.
@@ -165,23 +177,16 @@ export function registerSkillConfigTool(
       description:
         "Open the skills directory configuration UI. " +
         "Use when user wants to configure, add, or remove skill directories.",
-      inputSchema: {},
-      outputSchema: {
-        directories: z.array(z.object({
-          path: z.string(),
-          source: z.string(),
-          type: z.string(),
-          valid: z.boolean(),
-          allowed: z.boolean(),
-          skillCount: z.number().optional(),
-        })),
+      inputSchema: z.object({}),
+      outputSchema: z.object({
+        directories: z.array(DirectoryOutputSchema),
         activeSource: z.string(),
         isOverridden: z.boolean(),
         staticMode: z.boolean(),
         allowedOrgs: z.array(z.string()),
         allowedUsers: z.array(z.string()),
         allowedOrigins: z.array(z.string()),
-      },
+      }),
       _meta: { ui: { resourceUri: RESOURCE_URI } },
       annotations: {
         readOnlyHint: true,
@@ -222,20 +227,13 @@ export function registerSkillConfigTool(
       title: "Add Skills Directory",
       description: "Add a skills directory to the configuration.",
       inputSchema: AddDirectoryInputSchema,
-      outputSchema: {
+      outputSchema: z.object({
         success: z.boolean(),
-        directories: z.array(z.object({
-          path: z.string(),
-          source: z.string(),
-          type: z.string(),
-          valid: z.boolean(),
-          allowed: z.boolean(),
-          skillCount: z.number().optional(),
-        })).optional(),
+        directories: z.array(DirectoryOutputSchema).optional(),
         activeSource: z.string().optional(),
         isOverridden: z.boolean().optional(),
         error: z.string().optional(),
-      },
+      }),
       _meta: {
         ui: {
           resourceUri: RESOURCE_URI,
@@ -302,20 +300,13 @@ export function registerSkillConfigTool(
       title: "Remove Skills Directory",
       description: "Remove a skills directory from the configuration.",
       inputSchema: RemoveDirectoryInputSchema,
-      outputSchema: {
+      outputSchema: z.object({
         success: z.boolean(),
-        directories: z.array(z.object({
-          path: z.string(),
-          source: z.string(),
-          type: z.string(),
-          valid: z.boolean(),
-          allowed: z.boolean(),
-          skillCount: z.number().optional(),
-        })).optional(),
+        directories: z.array(DirectoryOutputSchema).optional(),
         activeSource: z.string().optional(),
         isOverridden: z.boolean().optional(),
         error: z.string().optional(),
-      },
+      }),
       _meta: {
         ui: {
           resourceUri: RESOURCE_URI,
@@ -381,14 +372,14 @@ export function registerSkillConfigTool(
     {
       title: "Add Allowed GitHub Org",
       description: "Add a GitHub organization to the allowed list for skill repos.",
-      inputSchema: {
+      inputSchema: z.object({
         org: z.string().describe("GitHub organization name to allow"),
-      },
-      outputSchema: {
+      }),
+      outputSchema: z.object({
         success: z.boolean(),
         allowedOrgs: z.array(z.string()),
         error: z.string().optional(),
-      },
+      }),
       _meta: {
         ui: {
           resourceUri: RESOURCE_URI,
@@ -456,14 +447,14 @@ export function registerSkillConfigTool(
     {
       title: "Remove Allowed GitHub Org",
       description: "Remove a GitHub organization from the allowed list.",
-      inputSchema: {
+      inputSchema: z.object({
         org: z.string().describe("GitHub organization name to remove"),
-      },
-      outputSchema: {
+      }),
+      outputSchema: z.object({
         success: z.boolean(),
         allowedOrgs: z.array(z.string()),
         error: z.string().optional(),
-      },
+      }),
       _meta: {
         ui: {
           resourceUri: RESOURCE_URI,
@@ -532,18 +523,18 @@ export function registerSkillConfigTool(
       title: "Add Allowed Well-Known Origin",
       description:
         "Add an HTTPS origin (e.g. https://example.com) to the allowed list for well-known publishers.",
-      inputSchema: {
+      inputSchema: z.object({
         origin: z
           .string()
           .describe(
             "Origin or full URL (e.g. https://example.com or https://example.com/.well-known/agent-skills/). Only the scheme + host[:port] is stored."
           ),
-      },
-      outputSchema: {
+      }),
+      outputSchema: z.object({
         success: z.boolean(),
         allowedOrigins: z.array(z.string()),
         error: z.string().optional(),
-      },
+      }),
       _meta: {
         ui: {
           resourceUri: RESOURCE_URI,
@@ -620,14 +611,14 @@ export function registerSkillConfigTool(
     {
       title: "Remove Allowed Well-Known Origin",
       description: "Remove an HTTPS origin from the well-known allowed list.",
-      inputSchema: {
+      inputSchema: z.object({
         origin: z.string().describe("Origin to remove (exact match)"),
-      },
-      outputSchema: {
+      }),
+      outputSchema: z.object({
         success: z.boolean(),
         allowedOrigins: z.array(z.string()),
         error: z.string().optional(),
-      },
+      }),
       _meta: {
         ui: {
           resourceUri: RESOURCE_URI,
@@ -684,14 +675,14 @@ export function registerSkillConfigTool(
     {
       title: "Set Static Mode",
       description: "Enable or disable static mode (freezes skills list at startup).",
-      inputSchema: {
+      inputSchema: z.object({
         enabled: z.boolean().describe("Whether to enable static mode"),
-      },
-      outputSchema: {
+      }),
+      outputSchema: z.object({
         success: z.boolean(),
         staticMode: z.boolean().optional(),
         error: z.string().optional(),
-      },
+      }),
       _meta: {
         ui: {
           resourceUri: RESOURCE_URI,

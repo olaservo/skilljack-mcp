@@ -16,8 +16,8 @@
  */
 
 import * as http from "node:http";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { NodeStreamableHTTPServerTransport } from "@modelcontextprotocol/node";
+import { McpServer } from "@modelcontextprotocol/server";
 import { registerSkillTool, getServerInstructions, SkillState, CatalogMode } from "./skill-tool.js";
 import { registerSkillResources } from "./skill-resources.js";
 import { registerSkillPrompts } from "./skill-prompts.js";
@@ -85,7 +85,7 @@ export async function startHttpServer(
 
     // Fresh server + transport per request (stateless).
     const server = buildCoreServer(skillState, catalogMode);
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => {
       transport.close();
       server.close();

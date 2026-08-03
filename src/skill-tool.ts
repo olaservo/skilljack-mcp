@@ -10,8 +10,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { McpServer, RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { McpServer, RegisteredTool, CallToolResult } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { SkillMetadata, loadSkillContent, generateInstructions, getModelInvocableSkills } from "./skill-discovery.js";
 

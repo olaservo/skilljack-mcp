@@ -12,5 +12,18 @@
     "declaration": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts", "src/__fixtures__/**", "src/__test-helpers__/**"]
+  // src/ui/** is the browser half: it imports @modelcontextprotocol/ext-apps,
+  // which is hard-bound to MCP TypeScript SDK v1 (no v2-compatible release
+  // exists), while everything else here is on SDK v2. Typechecking it against v2
+  // would fail, so it is excluded here and covered by tsconfig.ui.json instead
+  // (run by `npm run build:ui`). Vite bundles it separately into self-contained
+  // HTML; the two halves only ever meet over the MCP wire.
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.test.ts",
+    "src/__fixtures__/**",
+    "src/__test-helpers__/**",
+    "src/ui/**"
+  ]
 }

@@ -1,8 +1,7 @@
 import { describe, it, expect } from "vitest";
 import * as path from "node:path";
 import type * as http from "node:http";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { startHttpServer } from "./http-transport.js";
 import { createTestSkill, createTestSkillState } from "./__test-helpers__/helpers.js";
 import { BUNDLED_SKILL_SOURCE } from "./skill-discovery.js";
