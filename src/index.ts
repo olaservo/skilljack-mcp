@@ -853,7 +853,7 @@ async function main() {
   const server = new McpServer(
     {
       name: "skilljack-mcp",
-      version: "1.0.0",
+      version: "0.13.0",
     },
     {
       capabilities: {

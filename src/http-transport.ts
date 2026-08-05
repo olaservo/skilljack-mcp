@@ -41,7 +41,7 @@ export function buildCoreServer(
   const instructions = getServerInstructions(skillState, catalogMode);
 
   const server = new McpServer(
-    { name: "skilljack-mcp", version: "1.0.0" },
+    { name: "skilljack-mcp", version: "0.13.0" },
     {
       capabilities: {
         tools: { listChanged: false },
