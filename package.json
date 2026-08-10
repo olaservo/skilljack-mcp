@@ -37,6 +37,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
+    "prepublishOnly": "npm run build",
     "build": "npm run build:ui && npm run build:ui:display && tsc",
     "build:ui": "npm run typecheck:ui && vite build",
     "build:ui:display": "cross-env INPUT=skill-display.html vite build --emptyOutDir false",
