@@ -5,9 +5,21 @@
 - `npm run build` - Compile TypeScript to dist/ (Vite UI build + `tsc`)
 - `npm run dev` - Watch mode (tsx)
 - `npm test` - Run the vitest suite
+- `npm run typecheck` - Typecheck both halves (`tsc --noEmit` for the server, `tsconfig.ui.json` for `src/ui`)
 - `npm run inspector` - Test with MCP Inspector
 
-CI (`.github/workflows/ci.yml`) runs `npm ci`, `npm run build`, and `npm test` on Node 20 for every push to `main` and every PR.
+CI (`.github/workflows/ci.yml`) runs `npm ci`, `npm run build`, and `npm test` on Node 20 for every push to `main` and every PR. Node 20+ is required (MCP TypeScript SDK v2 floor).
+
+## SDK split: server on v2, UI on v1
+
+This package spans two independent bundles that share only the MCP wire format:
+
+- **Server half** (everything except `src/ui/**`) is on **MCP TypeScript SDK v2** — `@modelcontextprotocol/server`, `@modelcontextprotocol/server/stdio`, `@modelcontextprotocol/node` (+ `@modelcontextprotocol/client` in tests only). Typechecked by the root `tsconfig.json`, which **excludes `src/ui/**`**.
+- **Browser half** (`src/ui/mcp-app.ts`, `src/ui/skill-display.ts`) is on **`@modelcontextprotocol/ext-apps` + SDK v1**, because ext-apps (latest 1.7.5) is hard-bound to v1 and has no v2-compatible release. Vite bundles it into self-contained HTML that runs in an iframe. Typechecked by `tsconfig.ui.json` (run by `npm run build:ui`).
+- `@modelcontextprotocol/sdk` (v1) and `@modelcontextprotocol/ext-apps` are **devDependencies**: they are needed to *build* the browser bundle, never to *run* the server.
+- `src/ui-meta.ts` is a vendored, faithful port of the three `@modelcontextprotocol/ext-apps/server` helpers the server used (`registerAppTool`, `registerAppResource`, `getUiCapability`), retyped against v2. It must keep emitting **both** `_meta['ui/resourceUri']` and `_meta.ui.resourceUri` — hosts read either. Delete it when ext-apps ships a v2-compatible release.
+
+No v1 object ever flows into v2 code in-process, so the two halves can stay on different major versions.
 
 ## Configuration
 
@@ -49,8 +61,9 @@ src/
 ├── well-known-sync.ts     # Fetch + verify (SHA-256) + safely extract publisher artifacts
 ├── well-known-polling.ts  # Periodic well-known index re-fetch (ETag/If-None-Match)
 ├── http-transport.ts      # Stateless Streamable HTTP transport (buildCoreServer, startHttpServer)
+├── ui-meta.ts             # Vendored MCP Apps _meta helpers (see "SDK split" above)
 ├── types/                 # Ambient type declarations (e.g. yauzl-promise)
-└── ui/                    # MCP Apps UI (mcp-app.ts, skill-display.ts) built by Vite
+└── ui/                    # MCP Apps UI (mcp-app.ts, skill-display.ts) built by Vite — stays on ext-apps + SDK v1
 ```
 
 Packaging: `manifest.json` + `.mcpbignore` define the `.mcpb` bundle (MCP Bundle) for distribution.
@@ -83,7 +96,7 @@ Packaging: `manifest.json` + `.mcpbignore` define the `.mcpb` bundle (MCP Bundle
 4. **Catalog delivery**: `<available_skills>` catalog in server `instructions` (default; sent at `initialize`, frozen until restart on stdio) or in the `load-skill` tool description (`--catalog=tool-description`; refreshable via `tools/listChanged` but legacy/not recommended) — exactly one channel, never both
 5. **Prompts**: `/skill` prompt with auto-completion + per-skill prompts, refreshable via `prompts/listChanged`
 6. **Progressive disclosure**: Full SKILL.md loaded on demand via `load-skill` tool or prompts
-7. **MCP SDK patterns**: Uses `McpServer`, `ResourceTemplate`, `completable()`, Zod schemas
+7. **MCP SDK patterns**: Uses `McpServer`, `ResourceTemplate`, `completable()`, Zod schemas — all from `@modelcontextprotocol/server` (SDK v2). Schemas passed to `registerTool`/`registerPrompt` must be Standard Schema objects (`z.object({ … })`), not raw shapes; `RegisteredTool.update()` / `RegisteredPrompt.update()` never auto-wrap.
 
 ## Key Functions
 
@@ -181,7 +194,7 @@ The resource layer follows [SEP-2640 (Skills Extension)](https://github.com/mode
 
 - ES modules (`.js` extensions in imports)
 - **Tool search / deferred tools:** the skill catalog is delivered through exactly ONE channel, selected by `--catalog=` / `SKILLJACK_CATALOG` (never both simultaneously). In the default `instructions` mode the catalog arrives via the `initialize` handshake and **survives tool search** (verified by evals 2026-07-05: 3/3 previously-failing tasks pass with instructions + tool search on), at the cost of being frozen at startup on stdio (the SDK cannot update instructions after construction). On HTTP the catalog stays fresh for *new* connections: file watchers/polling update skillState and instructions are regenerated per request — but MCP only delivers instructions at `initialize`, so already-connected clients see catalog changes only after reconnecting. In `tool-description` mode the catalog is dynamic via `tools/listChanged`, but clients with tool search / deferred tool loading enabled (default on modern Claude Code) defer MCP tool descriptions out of context, so the model never sees it and won't auto-activate — that mode needs `ENABLE_TOOL_SEARCH=false`. **`tool-description` is legacy and not recommended** (measured 2026-07-06, issue #78): it has no steady-state cost advantage (with tool search off, both modes cost the same ~$0.73–0.94/eval vs $0.15–0.21 for the default, because loading all tool definitions upfront dominates), and its live-refresh advantage is a prompt-cache trap — tool definitions sit at the top of the cached prompt prefix, so every `tools/listChanged` catalog refresh invalidates the entire cache (tools + system prompt + conversation) and re-writes it at cache-write prices. It is retained only as an escape hatch and as the evals' control condition. Issue #78 now tracks only the stdio instructions-freeze gap.
-- Transports: stdio (default, full dynamic refresh + UI config/display tools) or stateless HTTP (`--http`, core skill surface only, per-request `StreamableHTTPServerTransport({ sessionIdGenerator: undefined })`, no push notifications). `main()` branches to `startHttpServer()` right after startup discovery, first wiring the same file watchers + remote polling as stdio to a state-only refresh (`refreshSkillState`) — requests read skillState fresh, clients just aren't notified.
+- Transports: stdio (default, full dynamic refresh + UI config/display tools; `StdioServerTransport` from `@modelcontextprotocol/server/stdio`) or stateless HTTP (`--http`, core skill surface only, per-request `NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined })` from `@modelcontextprotocol/node`, no push notifications). `main()` branches to `startHttpServer()` right after startup discovery, first wiring the same file watchers + remote polling as stdio to a state-only refresh (`refreshSkillState`) — requests read skillState fresh, clients just aren't notified.
 - Errors logged to stderr (stdout is MCP protocol)
 - Security: path traversal checks via `isPathWithinBase()`
 - File size limit: 1MB default (`MAX_FILE_SIZE_MB` env var to configure)

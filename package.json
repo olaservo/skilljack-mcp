@@ -1,6 +1,6 @@
 {
   "name": "@skilljack/mcp",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "MCP server that discovers and serves Agent Skills. I know kung fu.",
   "type": "module",
   "main": "dist/index.js",
@@ -34,12 +34,14 @@
     "cli"
   ],
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "scripts": {
     "build": "npm run build:ui && npm run build:ui:display && tsc",
-    "build:ui": "vite build",
+    "build:ui": "npm run typecheck:ui && vite build",
     "build:ui:display": "cross-env INPUT=skill-display.html vite build --emptyOutDir false",
+    "typecheck": "tsc --noEmit && npm run typecheck:ui",
+    "typecheck:ui": "tsc -p tsconfig.ui.json",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "inspector": "npx @modelcontextprotocol/inspector@latest node dist/index.js",
@@ -56,17 +58,20 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@modelcontextprotocol/ext-apps": "^1.0.0",
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/node": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
     "chokidar": "^5.0.0",
     "simple-git": "^3.27.0",
     "tar": "^7.4.0",
     "yaml": "^2.7.0",
     "yauzl-promise": "^4.0.0",
-    "zod": "^4.0.0"
+    "zod": "^4.2.0"
   },
   "devDependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.201",
+    "@modelcontextprotocol/client": "^2.0.0",
+    "@modelcontextprotocol/ext-apps": "^1.7.5",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/node": "^26.1.0",
     "@types/tar": "^7.0.87",
     "@vitest/coverage-v8": "^4.1.0",

@@ -6,8 +6,7 @@
  * 2. Per-skill prompts - Dynamic prompts for each skill (e.g., /mcp-server-ts)
  */
 
-import { McpServer, RegisteredPrompt } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { completable } from "@modelcontextprotocol/sdk/server/completable.js";
+import { McpServer, RegisteredPrompt, completable } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import {
   loadSkillContent,
@@ -70,12 +69,12 @@ export function registerSkillPrompts(
     {
       title: "Load Skill",
       description: getPromptDescription(skillState),
-      argsSchema: {
+      argsSchema: z.object({
         name: completable(
           z.string().describe("Skill name"),
           (value) => getSkillNameCompletions(value, skillState)
         ),
-      },
+      }),
     },
     async ({ name }) => {
       const skill = skillState.skillMap.get(name);

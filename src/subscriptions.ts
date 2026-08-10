@@ -13,11 +13,7 @@
 
 import chokidar, { FSWatcher } from "chokidar";
 import * as path from "node:path";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import {
-  SubscribeRequestSchema,
-  UnsubscribeRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { McpServer } from "@modelcontextprotocol/server";
 import { SkillState, isPathWithinBase } from "./skill-tool.js";
 import { parseSkillResourceUri } from "./skill-discovery.js";
 
@@ -324,7 +320,7 @@ export function registerSubscriptionHandlers(
 
   // Handle resources/subscribe requests
   server.server.setRequestHandler(
-    SubscribeRequestSchema,
+    'resources/subscribe',
     async (request) => {
       const { uri } = request.params;
 
@@ -344,7 +340,7 @@ export function registerSubscriptionHandlers(
 
   // Handle resources/unsubscribe requests
   server.server.setRequestHandler(
-    UnsubscribeRequestSchema,
+    'resources/unsubscribe',
     async (request) => {
       const { uri } = request.params;
       unsubscribe(manager, uri);

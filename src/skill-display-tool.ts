@@ -10,13 +10,12 @@
 import * as fs from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { CallToolResult, ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
+import { McpServer, CallToolResult, ReadResourceResult } from "@modelcontextprotocol/server";
 import {
   registerAppTool,
   registerAppResource,
   RESOURCE_MIME_TYPE,
-} from "@modelcontextprotocol/ext-apps/server";
+} from "./ui-meta.js";
 import { z } from "zod";
 import {
   getSkillInvocationOverrides,
@@ -54,21 +53,40 @@ function getUIPath(): string {
 }
 
 /**
- * Schema shape for update-invocation tool input.
+ * Input schema for the update-invocation tool.
  */
-const UpdateInvocationInputSchema = {
+const UpdateInvocationInputSchema = z.object({
   skillName: z.string().describe("Name of the skill to update"),
   setting: z.enum(["assistant", "user"]).describe("Which setting to update"),
   value: z.boolean().describe("New value for the setting"),
-};
+});
 
 /**
- * Schema shape for reset-override tool input.
+ * Input schema for the reset-override tool.
  */
-const ResetOverrideInputSchema = {
+const ResetOverrideInputSchema = z.object({
   skillName: z.string().describe("Name of the skill to reset"),
   setting: z.enum(["assistant", "user"]).optional().describe("Which setting to reset (omit for both)"),
-};
+});
+
+/**
+ * Output schema fragment describing one skill in the display UI.
+ * Shared by every skill-display tool that returns the skill list.
+ */
+const SkillDisplayOutputSchema = z.object({
+  name: z.string(),
+  baseName: z.string(),
+  description: z.string(),
+  path: z.string(),
+  assistantInvocable: z.boolean(),
+  userInvocable: z.boolean(),
+  isAssistantOverridden: z.boolean(),
+  isUserOverridden: z.boolean(),
+  sourceType: z.enum(["local", "github", "bundled", "well-known"]),
+  sourceDisplayName: z.string(),
+  sourceOwner: z.string().optional(),
+  sourceRepo: z.string().optional(),
+});
 
 /**
  * Callback type for when invocation settings change.
@@ -142,24 +160,11 @@ export function registerSkillDisplayTool(
       description:
         "Open the skill display UI to view available skills and configure their invocation settings. " +
         "Use when user wants to see skills or toggle assistant/user invocation.",
-      inputSchema: {},
-      outputSchema: {
-        skills: z.array(z.object({
-          name: z.string(),
-          baseName: z.string(),
-          description: z.string(),
-          path: z.string(),
-          assistantInvocable: z.boolean(),
-          userInvocable: z.boolean(),
-          isAssistantOverridden: z.boolean(),
-          isUserOverridden: z.boolean(),
-          sourceType: z.enum(["local", "github", "bundled", "well-known"]),
-          sourceDisplayName: z.string(),
-          sourceOwner: z.string().optional(),
-          sourceRepo: z.string().optional(),
-        })),
+      inputSchema: z.object({}),
+      outputSchema: z.object({
+        skills: z.array(SkillDisplayOutputSchema),
         totalCount: z.number(),
-      },
+      }),
       _meta: { ui: { resourceUri: RESOURCE_URI } },
       annotations: {
         readOnlyHint: true,
@@ -194,25 +199,12 @@ export function registerSkillDisplayTool(
       title: "Update Skill Invocation",
       description: "Update invocation settings for a skill.",
       inputSchema: UpdateInvocationInputSchema,
-      outputSchema: {
+      outputSchema: z.object({
         success: z.boolean(),
-        skills: z.array(z.object({
-          name: z.string(),
-          baseName: z.string(),
-          description: z.string(),
-          path: z.string(),
-          assistantInvocable: z.boolean(),
-          userInvocable: z.boolean(),
-          isAssistantOverridden: z.boolean(),
-          isUserOverridden: z.boolean(),
-          sourceType: z.enum(["local", "github", "bundled", "well-known"]),
-          sourceDisplayName: z.string(),
-          sourceOwner: z.string().optional(),
-          sourceRepo: z.string().optional(),
-        })).optional(),
+        skills: z.array(SkillDisplayOutputSchema).optional(),
         totalCount: z.number().optional(),
         error: z.string().optional(),
-      },
+      }),
       _meta: {
         ui: {
           resourceUri: RESOURCE_URI,
@@ -287,25 +279,12 @@ export function registerSkillDisplayTool(
       title: "Reset Skill Override",
       description: "Reset a skill's invocation settings to frontmatter defaults.",
       inputSchema: ResetOverrideInputSchema,
-      outputSchema: {
+      outputSchema: z.object({
         success: z.boolean(),
-        skills: z.array(z.object({
-          name: z.string(),
-          baseName: z.string(),
-          description: z.string(),
-          path: z.string(),
-          assistantInvocable: z.boolean(),
-          userInvocable: z.boolean(),
-          isAssistantOverridden: z.boolean(),
-          isUserOverridden: z.boolean(),
-          sourceType: z.enum(["local", "github", "bundled", "well-known"]),
-          sourceDisplayName: z.string(),
-          sourceOwner: z.string().optional(),
-          sourceRepo: z.string().optional(),
-        })).optional(),
+        skills: z.array(SkillDisplayOutputSchema).optional(),
         totalCount: z.number().optional(),
         error: z.string().optional(),
-      },
+      }),
       _meta: {
         ui: {
           resourceUri: RESOURCE_URI,

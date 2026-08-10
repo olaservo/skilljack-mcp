@@ -15,8 +15,8 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { Resource } from "@modelcontextprotocol/sdk/types.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/server";
+import type { Resource, ReadResourceResult } from "@modelcontextprotocol/server";
 import {
   loadSkillContent,
   getResourceAnnotations,

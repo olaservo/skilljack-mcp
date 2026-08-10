@@ -1,0 +1,24 @@
+{
+  // Typecheck-only config for the browser half (src/ui/**), which Vite bundles
+  // into self-contained HTML. It stays on @modelcontextprotocol/ext-apps, which
+  // is hard-bound to MCP TypeScript SDK v1 and has no v2-compatible release, so
+  // it must NOT be typechecked against the v2 SDK the server uses. The server
+  // tsconfig.json excludes src/ui for exactly that reason; this config is what
+  // keeps the UI type-safe. `npm run build:ui` runs it before vite (vite/esbuild
+  // transpiles without typechecking).
+  "compilerOptions": {
+    "target": "ES2022",
+    // Same resolution mode the root tsconfig used when it still covered src/ui,
+    // so moving these files to their own project changes nothing about how the
+    // ext-apps types resolve.
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["src/ui/**/*.ts"]
+}

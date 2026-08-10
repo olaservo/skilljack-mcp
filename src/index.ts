@@ -21,8 +21,8 @@
  *             remain fully dynamic.
  */
 
-import { McpServer, RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { McpServer, RegisteredTool } from "@modelcontextprotocol/server";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import chokidar from "chokidar";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -853,7 +853,7 @@ async function main() {
   const server = new McpServer(
     {
       name: "skilljack-mcp",
-      version: "1.0.0",
+      version: "0.13.0",
     },
     {
       capabilities: {

@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "skilljack-mcp",
   "display_name": "Skilljack MCP Server",
-  "version": "0.11.0",
+  "version": "0.13.0",
   "description": "MCP server that discovers and serves Agent Skills. I know kung fu.",
   "author": {
     "name": "Ola Hungerford",
@@ -32,7 +32,7 @@
   "compatibility": {
     "platforms": ["darwin", "win32", "linux"],
     "runtimes": {
-      "node": ">=18.0.0"
+      "node": ">=20.0.0"
     }
   },
   "user_config": {
