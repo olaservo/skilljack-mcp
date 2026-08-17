@@ -95,6 +95,27 @@ const DirectoryOutputSchema = z.object({
 });
 
 /**
+ * Output schema for the config tools that mutate state.
+ *
+ * On success they all return the same full config snapshot, so declaring anything
+ * narrower makes the tool unusable: the SDK stamps `additionalProperties: false` on
+ * the advertised outputSchema, and a client that has called tools/list rejects the
+ * result with -32602. The error paths return only a subset, so everything except
+ * `success` is optional.
+ */
+const ConfigMutationOutputSchema = z.object({
+  success: z.boolean(),
+  directories: z.array(DirectoryOutputSchema).optional(),
+  activeSource: z.string().optional(),
+  isOverridden: z.boolean().optional(),
+  staticMode: z.boolean().optional(),
+  allowedOrgs: z.array(z.string()).optional(),
+  allowedUsers: z.array(z.string()).optional(),
+  allowedOrigins: z.array(z.string()).optional(),
+  error: z.string().optional(),
+});
+
+/**
  * Callback type for when directories or GitHub settings change.
  */
 export type OnDirectoriesChangedCallback = () => void | Promise<void>;
@@ -227,13 +248,7 @@ export function registerSkillConfigTool(
       title: "Add Skills Directory",
       description: "Add a skills directory to the configuration.",
       inputSchema: AddDirectoryInputSchema,
-      outputSchema: z.object({
-        success: z.boolean(),
-        directories: z.array(DirectoryOutputSchema).optional(),
-        activeSource: z.string().optional(),
-        isOverridden: z.boolean().optional(),
-        error: z.string().optional(),
-      }),
+      outputSchema: ConfigMutationOutputSchema,
       _meta: {
         ui: {
           resourceUri: RESOURCE_URI,
@@ -300,13 +315,7 @@ export function registerSkillConfigTool(
       title: "Remove Skills Directory",
       description: "Remove a skills directory from the configuration.",
       inputSchema: RemoveDirectoryInputSchema,
-      outputSchema: z.object({
-        success: z.boolean(),
-        directories: z.array(DirectoryOutputSchema).optional(),
-        activeSource: z.string().optional(),
-        isOverridden: z.boolean().optional(),
-        error: z.string().optional(),
-      }),
+      outputSchema: ConfigMutationOutputSchema,
       _meta: {
         ui: {
           resourceUri: RESOURCE_URI,
@@ -375,11 +384,7 @@ export function registerSkillConfigTool(
       inputSchema: z.object({
         org: z.string().describe("GitHub organization name to allow"),
       }),
-      outputSchema: z.object({
-        success: z.boolean(),
-        allowedOrgs: z.array(z.string()),
-        error: z.string().optional(),
-      }),
+      outputSchema: ConfigMutationOutputSchema,
       _meta: {
         ui: {
           resourceUri: RESOURCE_URI,
@@ -450,11 +455,7 @@ export function registerSkillConfigTool(
       inputSchema: z.object({
         org: z.string().describe("GitHub organization name to remove"),
       }),
-      outputSchema: z.object({
-        success: z.boolean(),
-        allowedOrgs: z.array(z.string()),
-        error: z.string().optional(),
-      }),
+      outputSchema: ConfigMutationOutputSchema,
       _meta: {
         ui: {
           resourceUri: RESOURCE_URI,
@@ -530,11 +531,7 @@ export function registerSkillConfigTool(
             "Origin or full URL (e.g. https://example.com or https://example.com/.well-known/agent-skills/). Only the scheme + host[:port] is stored."
           ),
       }),
-      outputSchema: z.object({
-        success: z.boolean(),
-        allowedOrigins: z.array(z.string()),
-        error: z.string().optional(),
-      }),
+      outputSchema: ConfigMutationOutputSchema,
       _meta: {
         ui: {
           resourceUri: RESOURCE_URI,
@@ -614,11 +611,7 @@ export function registerSkillConfigTool(
       inputSchema: z.object({
         origin: z.string().describe("Origin to remove (exact match)"),
       }),
-      outputSchema: z.object({
-        success: z.boolean(),
-        allowedOrigins: z.array(z.string()),
-        error: z.string().optional(),
-      }),
+      outputSchema: ConfigMutationOutputSchema,
       _meta: {
         ui: {
           resourceUri: RESOURCE_URI,
