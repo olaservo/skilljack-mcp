@@ -28,7 +28,15 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverSkills, createSkillMap, applyInvocationOverrides, SkillSource, DEFAULT_SKILL_SOURCE, BUNDLED_SKILL_SOURCE, warnLargeSkillCount } from "./skill-discovery.js";
-import { registerSkillTool, getToolDescription, getServerInstructions, SkillState, CatalogMode } from "./skill-tool.js";
+import {
+  registerSkillTool,
+  installToolsMode,
+  getToolDescription,
+  getServerInstructions,
+  SkillState,
+  CatalogMode,
+  ToolsMode,
+} from "./skill-tool.js";
 import { pruneDigestCache } from "./skill-entries.js";
 import { registerSkillResources } from "./skill-resources.js";
 import { registerSkillPrompts, refreshPrompts, PromptRegistry } from "./skill-prompts.js";
@@ -223,20 +231,43 @@ export function getStaticMode(): boolean {
  * env var > "instructions". Unknown values warn and fall back to the default.
  */
 export function getCatalogMode(): CatalogMode {
-  const args = process.argv.slice(2);
-  const flag = args.find((a) => a.startsWith("--catalog="));
-  const raw = flag ? flag.slice("--catalog=".length) : process.env.SKILLJACK_CATALOG;
+  return resolveEnumOption("catalog mode", "--catalog", "SKILLJACK_CATALOG", ["tool-description", "instructions"], "instructions");
+}
+
+/**
+ * Resolve an enum-valued option from `<flag>=<value>` on the command line
+ * (single token so it isn't parsed as a skill directory), else an env var,
+ * else the fallback. Unknown values warn and fall back.
+ */
+function resolveEnumOption<T extends string>(
+  label: string,
+  flag: string,
+  envVar: string,
+  allowed: readonly T[],
+  fallback: T
+): T {
+  const prefix = `${flag}=`;
+  const arg = process.argv.slice(2).find((a) => a.startsWith(prefix));
+  const raw = arg ? arg.slice(prefix.length) : process.env[envVar];
   if (!raw) {
-    return "instructions";
+    return fallback;
   }
   const value = raw.toLowerCase();
-  if (value === "tool-description" || value === "instructions") {
-    return value;
+  const match = allowed.find((a) => a === value);
+  if (match !== undefined) {
+    return match;
   }
-  console.error(
-    `Unknown catalog mode "${raw}" (expected tool-description | instructions); using "instructions"`
-  );
-  return "instructions";
+  console.error(`Unknown ${label} "${raw}" (expected ${allowed.join(" | ")}); using "${fallback}"`);
+  return fallback;
+}
+
+/**
+ * Resolve whether the load-skill and skill-resource tools are offered (see
+ * ToolsMode in skill-tool.ts). Priority: `--tools=<mode>` > SKILLJACK_TOOLS
+ * env var > "auto". Unknown values warn and fall back to the default.
+ */
+export function getToolsMode(): ToolsMode {
+  return resolveEnumOption("tools mode", "--tools", "SKILLJACK_TOOLS", ["auto", "always", "never"], "auto");
 }
 
 /**
@@ -828,6 +859,7 @@ async function main() {
   const httpPort = getHttpPort();
   const catalogMode = getCatalogMode();
   warnIfLegacyCatalogMode(catalogMode);
+  const toolsMode = getToolsMode();
   if (httpPort !== null) {
     if (!isStatic) {
       if (currentSkillsDirs.length > 0) {
@@ -837,7 +869,7 @@ async function main() {
         refreshSkillState(currentSkillsDirs)
       );
     }
-    await startHttpServer(httpPort, skillState, catalogMode);
+    await startHttpServer(httpPort, skillState, catalogMode, toolsMode);
     return;
   }
 
@@ -850,7 +882,7 @@ async function main() {
   // set once at construction, so the catalog is frozen until restart on stdio)
   // or the load-skill tool description (`--catalog=tool-description`; dynamic
   // via tools/listChanged, but deferred out of context under tool search).
-  const initialInstructions = getServerInstructions(skillState, catalogMode);
+  const initialInstructions = getServerInstructions(skillState, catalogMode, toolsMode);
 
   const server = new McpServer(
     {
@@ -859,7 +891,9 @@ async function main() {
     },
     {
       capabilities: {
-        tools: { listChanged: !isStatic },
+        // In --tools=auto the skill tools may be disabled right after
+        // initialize, which the SDK announces with tools/list_changed.
+        tools: { listChanged: !isStatic || toolsMode === "auto" },
         resources: { subscribe: true, listChanged: true },
         prompts: { listChanged: !isStatic },
         // SEP-2640 (Skills Extension): https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640
@@ -872,7 +906,8 @@ async function main() {
   );
 
   // Register tools, resources, and prompts
-  const skillTool = registerSkillTool(server, skillState, catalogMode);
+  const skillTools = registerSkillTool(server, skillState, catalogMode);
+  const skillTool = skillTools.loadSkill;
   registerSkillResources(server, skillState);
   const promptRegistry = registerSkillPrompts(server, skillState);
 
@@ -998,6 +1033,9 @@ async function main() {
     }
     startRemoteSourcePolling(githubConfig, wellKnownConfig, refreshAll);
   }
+
+  // Last before connect: hooks oninitialized, which nothing may reassign after.
+  installToolsMode(server, skillTools, toolsMode, catalogMode);
 
   // Connect via stdio transport
   const transport = new StdioServerTransport();

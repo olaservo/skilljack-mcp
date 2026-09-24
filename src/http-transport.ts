@@ -18,7 +18,14 @@
 import * as http from "node:http";
 import { NodeStreamableHTTPServerTransport } from "@modelcontextprotocol/node";
 import { McpServer } from "@modelcontextprotocol/server";
-import { registerSkillTool, getServerInstructions, SkillState, CatalogMode } from "./skill-tool.js";
+import {
+  registerSkillTool,
+  installToolsMode,
+  getServerInstructions,
+  SkillState,
+  CatalogMode,
+  ToolsMode,
+} from "./skill-tool.js";
 import { registerSkillResources } from "./skill-resources.js";
 import { registerSkillPrompts } from "./skill-prompts.js";
 
@@ -36,9 +43,14 @@ import { registerSkillPrompts } from "./skill-prompts.js";
  */
 export function buildCoreServer(
   skillState: SkillState,
-  catalogMode: CatalogMode = "instructions"
+  catalogMode: CatalogMode = "instructions",
+  toolsMode: ToolsMode = "auto"
 ): McpServer {
-  const instructions = getServerInstructions(skillState, catalogMode);
+  // Stateless HTTP builds a server per request, so the initialize handshake
+  // is never visible to the instance that answers tools/list: "auto" cannot
+  // gate here and behaves as "always".
+  const effectiveToolsMode: ToolsMode = toolsMode === "auto" ? "always" : toolsMode;
+  const instructions = getServerInstructions(skillState, catalogMode, effectiveToolsMode);
 
   const server = new McpServer(
     { name: "skilljack-mcp", version: "0.13.0" },
@@ -56,9 +68,10 @@ export function buildCoreServer(
     }
   );
 
-  registerSkillTool(server, skillState, catalogMode);
+  const skillTools = registerSkillTool(server, skillState, catalogMode);
   registerSkillResources(server, skillState);
   registerSkillPrompts(server, skillState);
+  installToolsMode(server, skillTools, effectiveToolsMode, catalogMode);
 
   return server;
 }
@@ -73,7 +86,8 @@ const JSONRPC_ERROR = (code: number, message: string) =>
 export async function startHttpServer(
   port: number,
   skillState: SkillState,
-  catalogMode: CatalogMode = "instructions"
+  catalogMode: CatalogMode = "instructions",
+  toolsMode: ToolsMode = "auto"
 ): Promise<http.Server> {
   const httpServer = http.createServer(async (req, res) => {
     const url = req.url ?? "";
@@ -84,7 +98,7 @@ export async function startHttpServer(
     }
 
     // Fresh server + transport per request (stateless).
-    const server = buildCoreServer(skillState, catalogMode);
+    const server = buildCoreServer(skillState, catalogMode, toolsMode);
     const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => {
       transport.close();

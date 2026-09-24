@@ -12,6 +12,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { McpServer, RegisteredTool, CallToolResult } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { SKILLS_EXTENSION_ID } from "@olaservo/ext-skills/server";
 import { SkillMetadata, loadSkillContent, generateInstructions, getModelInvocableSkills } from "./skill-discovery.js";
 
 /**
@@ -36,6 +37,26 @@ export interface SkillState {
  * Set via `--catalog=<mode>` or SKILLJACK_CATALOG (see getCatalogMode in index.ts).
  */
 export type CatalogMode = "tool-description" | "instructions";
+
+/**
+ * Whether the load-skill and skill-resource tools are offered.
+ *
+ * - "auto" (default): offered unless the client declares the
+ *   `io.modelcontextprotocol/skills` extension in its capabilities, in which
+ *   case the host loads skills itself via skills/list, skills/get and
+ *   resources/read, and the tools are disabled after initialize.
+ * - "always": offered to every client.
+ * - "never": never registered as enabled.
+ *
+ * Set via `--tools=<mode>` or SKILLJACK_TOOLS (see getToolsMode in index.ts).
+ */
+export type ToolsMode = "auto" | "always" | "never";
+
+/** Handles for the two skill tools, so their mode can be applied after initialize. */
+export interface SkillTools {
+  loadSkill: RegisteredTool;
+  skillResource: RegisteredTool;
+}
 
 /**
  * Input schema for the skill tool.
@@ -90,19 +111,37 @@ export function getToolDescription(
  * tool description. The preamble names the tool because under tool search the
  * model may never see the tool description itself.
  */
-export function getCatalogInstructions(skillState: SkillState): string {
+export function getCatalogInstructions(
+  skillState: SkillState,
+  toolsMode: ToolsMode = "auto"
+): string {
   const allSkills = Array.from(skillState.skillMap.values());
   const modelInvocableSkills = getModelInvocableSkills(allSkills);
-  const usage =
-    "This server's `load-skill` tool loads a skill's full instructions. It returns " +
-    "the complete SKILL.md content with step-by-step guidance, examples, and file " +
-    "references to follow.\n\n" +
-    "IMPORTANT: When a skill is relevant to the user's task, you must invoke the " +
-    "`load-skill` tool IMMEDIATELY as your first action. NEVER just announce or " +
-    "mention a skill without actually calling the tool. This is a BLOCKING " +
-    "REQUIREMENT: invoke `load-skill` BEFORE generating any other response about " +
-    "the task.\n\n";
-  return usage + generateInstructions(modelInvocableSkills);
+  const intro =
+    "This server serves Agent Skills. Each <skill> below lists its name, description " +
+    "and the skill:// URI of its SKILL.md.\n\n";
+  const viaTool =
+    "call `load-skill` with the skill's name; it returns the complete SKILL.md " +
+    "content with step-by-step guidance, examples, and file references to follow.";
+  const howToLoad =
+    toolsMode === "never"
+      ? "This server offers no skill-loading tool. Load a skill by that URI through " +
+        "your host's skill loader (MCP skills extension " +
+        `${SKILLS_EXTENSION_ID}), or read the URI with resources/read.\n\n`
+      : toolsMode === "always"
+        ? "Hosts that support the MCP skills extension " +
+          `(${SKILLS_EXTENSION_ID}) may load a skill by that URI through their own ` +
+          `skill loader. Otherwise ${viaTool}\n\n`
+        : "If your host supports the MCP skills extension " +
+          `(${SKILLS_EXTENSION_ID}), it loads a skill by that URI through its own ` +
+          "skill loader and this server does not offer the `load-skill` tool. " +
+          `Otherwise ${viaTool}\n\n`;
+  const urgency =
+    "IMPORTANT: When a skill is relevant to the user's task, you must load it " +
+    "IMMEDIATELY as your first action. NEVER just announce or mention a skill " +
+    "without actually loading it. This is a BLOCKING REQUIREMENT: load the skill " +
+    "BEFORE generating any other response about the task.\n\n";
+  return intro + howToLoad + urgency + generateInstructions(modelInvocableSkills);
 }
 
 /**
@@ -113,10 +152,11 @@ export function getCatalogInstructions(skillState: SkillState): string {
  */
 export function getServerInstructions(
   skillState: SkillState,
-  catalogMode: CatalogMode = "instructions"
+  catalogMode: CatalogMode = "instructions",
+  toolsMode: ToolsMode = "auto"
 ): string | undefined {
   if (catalogMode === "instructions") {
-    return getCatalogInstructions(skillState);
+    return getCatalogInstructions(skillState, toolsMode);
   }
   return undefined;
 }
@@ -125,7 +165,7 @@ export function registerSkillTool(
   server: McpServer,
   skillState: SkillState,
   catalogMode: CatalogMode = "instructions"
-): RegisteredTool {
+): SkillTools {
   const skillTool = server.registerTool(
     "load-skill",
     {
@@ -181,10 +221,61 @@ export function registerSkillTool(
     }
   );
 
-  // Register the skill-resource tool
-  registerSkillResourceTool(server, skillState);
+  const skillResource = registerSkillResourceTool(server, skillState);
 
-  return skillTool;
+  return { loadSkill: skillTool, skillResource };
+}
+
+/** Whether the connected client declared the skills extension in its capabilities. */
+export function clientDeclaresSkillsExtension(server: McpServer): boolean {
+  const extensions = server.server.getClientCapabilities()?.extensions;
+  return extensions !== undefined && SKILLS_EXTENSION_ID in extensions;
+}
+
+function disableSkillTools(tools: SkillTools): void {
+  tools.loadSkill.disable();
+  tools.skillResource.disable();
+}
+
+/**
+ * Apply a ToolsMode. "never" disables the tools now; "auto" waits for the
+ * initialize handshake and disables them when the client declared the skills
+ * extension. Call immediately before connect(), since it hooks
+ * `server.server.oninitialized` and a later assignment would replace it.
+ *
+ * In the legacy tool-description catalog mode the catalog lives in the
+ * load-skill description, so auto leaves the tools on there. On the stateless
+ * HTTP transport tools/list arrives on a fresh server instance, so callers
+ * pass "always" in place of "auto" (see buildCoreServer).
+ */
+export function installToolsMode(
+  server: McpServer,
+  tools: SkillTools,
+  mode: ToolsMode,
+  catalogMode: CatalogMode = "instructions"
+): void {
+  if (mode === "always") return;
+  if (mode === "never") {
+    disableSkillTools(tools);
+    return;
+  }
+  if (catalogMode === "tool-description") {
+    console.error(
+      "--tools=auto has no effect with --catalog=tool-description: the skill catalog lives in the " +
+        "load-skill tool description, so the tools stay enabled for every client."
+    );
+    return;
+  }
+  const previous = server.server.oninitialized;
+  server.server.oninitialized = () => {
+    previous?.();
+    if (clientDeclaresSkillsExtension(server)) {
+      disableSkillTools(tools);
+      console.error(
+        `Client declares ${SKILLS_EXTENSION_ID}; load-skill and skill-resource tools disabled (--tools=auto)`
+      );
+    }
+  };
 }
 
 /**
@@ -324,8 +415,8 @@ export function isListedSkillFile(skillDir: string, rel: string): boolean {
 function registerSkillResourceTool(
   server: McpServer,
   skillState: SkillState
-): void {
-  server.registerTool(
+): RegisteredTool {
+  return server.registerTool(
     "skill-resource",
     {
       title: "Read Skill File",

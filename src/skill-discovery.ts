@@ -309,6 +309,7 @@ When a user's task matches a skill description below: 1) activate it, 2) follow 
     lines.push("<skill>");
     lines.push(`<name>${escapeXml(skill.name)}</name>`);
     lines.push(`<description>${escapeXml(skill.description)}</description>`);
+    lines.push(`<uri>${escapeXml(buildSkillResourceUri(skill, "SKILL.md"))}</uri>`);
     lines.push(`<location>${escapeXml(skill.path)}</location>`);
     lines.push("</skill>");
   }
