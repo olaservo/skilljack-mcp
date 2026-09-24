@@ -28,7 +28,15 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverSkills, createSkillMap, applyInvocationOverrides, SkillSource, DEFAULT_SKILL_SOURCE, BUNDLED_SKILL_SOURCE, warnLargeSkillCount } from "./skill-discovery.js";
-import { registerSkillTool, getToolDescription, getServerInstructions, SkillState, CatalogMode } from "./skill-tool.js";
+import {
+  registerSkillTool,
+  installToolsMode,
+  getToolDescription,
+  getServerInstructions,
+  SkillState,
+  CatalogMode,
+  ToolsMode,
+} from "./skill-tool.js";
 import { pruneDigestCache } from "./skill-entries.js";
 import { registerSkillResources } from "./skill-resources.js";
 import { registerSkillPrompts, refreshPrompts, PromptRegistry } from "./skill-prompts.js";
@@ -237,6 +245,26 @@ export function getCatalogMode(): CatalogMode {
     `Unknown catalog mode "${raw}" (expected tool-description | instructions); using "instructions"`
   );
   return "instructions";
+}
+
+/**
+ * Resolve whether the load-skill and skill-resource tools are offered (see
+ * ToolsMode in skill-tool.ts). Priority: `--tools=<mode>` > SKILLJACK_TOOLS
+ * env var > "auto". Unknown values warn and fall back to the default.
+ */
+export function getToolsMode(): ToolsMode {
+  const args = process.argv.slice(2);
+  const flag = args.find((a) => a.startsWith("--tools="));
+  const raw = flag ? flag.slice("--tools=".length) : process.env.SKILLJACK_TOOLS;
+  if (!raw) {
+    return "auto";
+  }
+  const value = raw.toLowerCase();
+  if (value === "auto" || value === "always" || value === "never") {
+    return value;
+  }
+  console.error(`Unknown tools mode "${raw}" (expected auto | always | never); using "auto"`);
+  return "auto";
 }
 
 /**
@@ -828,6 +856,7 @@ async function main() {
   const httpPort = getHttpPort();
   const catalogMode = getCatalogMode();
   warnIfLegacyCatalogMode(catalogMode);
+  const toolsMode = getToolsMode();
   if (httpPort !== null) {
     if (!isStatic) {
       if (currentSkillsDirs.length > 0) {
@@ -837,7 +866,7 @@ async function main() {
         refreshSkillState(currentSkillsDirs)
       );
     }
-    await startHttpServer(httpPort, skillState, catalogMode);
+    await startHttpServer(httpPort, skillState, catalogMode, toolsMode);
     return;
   }
 
@@ -872,7 +901,9 @@ async function main() {
   );
 
   // Register tools, resources, and prompts
-  const skillTool = registerSkillTool(server, skillState, catalogMode);
+  const skillTools = registerSkillTool(server, skillState, catalogMode);
+  installToolsMode(server, skillTools, toolsMode);
+  const skillTool = skillTools.loadSkill;
   registerSkillResources(server, skillState);
   const promptRegistry = registerSkillPrompts(server, skillState);
 

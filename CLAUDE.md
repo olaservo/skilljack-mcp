@@ -34,11 +34,13 @@ No v1 object ever flows into v2 code in-process, so the two halves can stay on d
 - `WELL_KNOWN_ALLOW_HTTP` - `1`/`true`/`yes` to permit `http://` origins (dev only)
 - `SKILLJACK_HTTP_PORT` / `SKILLJACK_HTTP` - Serve over stateless HTTP instead of stdio (port, default 3000)
 - `SKILLJACK_CATALOG` - Catalog delivery channel: `instructions` (default) | `tool-description` (legacy, not recommended) — exactly one, never both
+- `SKILLJACK_TOOLS` - Whether the `load-skill` / `skill-resource` tools are offered: `auto` (default: disabled after `initialize` when the client declares the skills extension) | `always` | `never`
 
 **CLI Options:**
 - Positional args: Skill directories, GitHub URLs, or well-known publisher URLs (e.g. `https://example.com/.well-known/agent-skills/`)
 - `--static`: Enable static mode (freeze skills at startup, no file watching)
 - `--http` / `--http=<port>`: Serve over stateless Streamable HTTP at `POST /mcp` instead of stdio (single token so it isn't parsed as a skill dir)
+- `--tools=<auto|always|never>`: Whether the `load-skill` and `skill-resource` tools are offered. `auto` (default) disables both after `initialize` when the client's capabilities carry `extensions["io.modelcontextprotocol/skills"]`, since such a host loads skills itself via `skills/list` / `skills/get` / `resources/read`. On stateless HTTP `auto` cannot see the handshake and leaves the tools on. Env: `SKILLJACK_TOOLS`. See `getToolsMode()` in index.ts / `installToolsMode()` in skill-tool.ts.
 - `--catalog=<instructions|tool-description>`: Which single channel carries the `<available_skills>` catalog (never both). `instructions` (default): server `instructions` — survives tool search, but frozen at startup on stdio since the SDK can't update instructions. `tool-description` (legacy, **not recommended** — see Conventions): the `load-skill` tool description — dynamic via `tools/listChanged`, but deferred out of context by tool search, and each refresh invalidates the whole prompt cache. Kept as an escape hatch and as the evals' control condition. Env: `SKILLJACK_CATALOG`. See `getCatalogMode()` in index.ts / `CatalogMode` in skill-tool.ts.
 
 ## Project Structure
@@ -105,6 +107,8 @@ Packaging: `manifest.json` + `.mcpbignore` define the `.mcpb` bundle (MCP Bundle
 |----------|------|---------|
 | `getStaticMode()` | index.ts | Check if static mode is enabled (CLI/env) |
 | `getCatalogMode()` | index.ts | Resolve the catalog channel (`--catalog=` / `SKILLJACK_CATALOG`, default `instructions`) |
+| `getToolsMode()` | index.ts | Resolve the tools mode (`--tools=` / `SKILLJACK_TOOLS`, default `auto`) |
+| `installToolsMode()` | skill-tool.ts | Disable the skill tools now (`never`) or after `initialize` when the client declares the skills extension (`auto`) |
 | `discoverSkillsFromDirs()` | index.ts | Scan directories for skills |
 | `refreshSkills()` | index.ts | Re-discover + update tool/prompts + notify clients |
 | `watchSkillDirectories()` | index.ts | Set up chokidar watchers (skipped in static mode) |
@@ -182,6 +186,8 @@ The server declares `io.modelcontextprotocol/skills` and implements the two meth
 |--------|---------|
 | `skills/list` | Paginated entries for every skill in `skillState`, read live on each request. |
 | `skills/get` | The entry for one skill by its `SKILL.md` URI, or `-32602` if none is served there. |
+
+A client that declares the extension in its own capabilities gets no `load-skill` / `skill-resource` tools by default (`--tools=auto`); the instructions catalog lists each skill's `skill://` URI so such a host can confirm it with `skills/get` and load it itself. The skills spec does not require clients to declare the extension, but the base protocol's extension negotiation expects both sides to advertise, and MCP Inspector and MCPJam do.
 
 An entry carries the skill's verbatim `frontmatter` and a complete `resources` manifest: `{uri, digest, size}` for `SKILL.md` and every file `listSkillFiles()` enumerates. That is the same set `resources/list` advertises, and `resources/read` refuses files outside it. Digests are SHA-256 over raw bytes, cached per file by mtime and size. `ttlMs`/`cacheScope` are emitted only on 2026-07-28+ connections, which this server does not yet serve (issue #104). `resources/directory/read` is not implemented and `directoryRead` is not declared.
 

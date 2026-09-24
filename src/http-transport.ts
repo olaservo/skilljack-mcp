@@ -18,7 +18,14 @@
 import * as http from "node:http";
 import { NodeStreamableHTTPServerTransport } from "@modelcontextprotocol/node";
 import { McpServer } from "@modelcontextprotocol/server";
-import { registerSkillTool, getServerInstructions, SkillState, CatalogMode } from "./skill-tool.js";
+import {
+  registerSkillTool,
+  installToolsMode,
+  getServerInstructions,
+  SkillState,
+  CatalogMode,
+  ToolsMode,
+} from "./skill-tool.js";
 import { registerSkillResources } from "./skill-resources.js";
 import { registerSkillPrompts } from "./skill-prompts.js";
 
@@ -36,7 +43,8 @@ import { registerSkillPrompts } from "./skill-prompts.js";
  */
 export function buildCoreServer(
   skillState: SkillState,
-  catalogMode: CatalogMode = "instructions"
+  catalogMode: CatalogMode = "instructions",
+  toolsMode: ToolsMode = "auto"
 ): McpServer {
   const instructions = getServerInstructions(skillState, catalogMode);
 
@@ -56,7 +64,7 @@ export function buildCoreServer(
     }
   );
 
-  registerSkillTool(server, skillState, catalogMode);
+  installToolsMode(server, registerSkillTool(server, skillState, catalogMode), toolsMode);
   registerSkillResources(server, skillState);
   registerSkillPrompts(server, skillState);
 
@@ -73,7 +81,8 @@ const JSONRPC_ERROR = (code: number, message: string) =>
 export async function startHttpServer(
   port: number,
   skillState: SkillState,
-  catalogMode: CatalogMode = "instructions"
+  catalogMode: CatalogMode = "instructions",
+  toolsMode: ToolsMode = "auto"
 ): Promise<http.Server> {
   const httpServer = http.createServer(async (req, res) => {
     const url = req.url ?? "";
@@ -84,7 +93,7 @@ export async function startHttpServer(
     }
 
     // Fresh server + transport per request (stateless).
-    const server = buildCoreServer(skillState, catalogMode);
+    const server = buildCoreServer(skillState, catalogMode, toolsMode);
     const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => {
       transport.close();
