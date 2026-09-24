@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -11,11 +10,14 @@ import {
   SKILLS_GET_METHOD,
   SkillsListResultSchema,
   SkillsGetResultSchema,
+  sha256Digest,
 } from "@olaservo/ext-skills/server";
 import { registerSkillResources } from "./skill-resources.js";
 import {
   buildSkillEntry,
   clearDigestCache,
+  fileDigest,
+  pruneDigestCache,
   registerSkillMethods,
 } from "./skill-entries.js";
 import { BUNDLED_SKILL_SOURCE, discoverSkills } from "./skill-discovery.js";
@@ -29,7 +31,7 @@ import {
 const FIXTURES_DIR = path.resolve(__dirname, "__fixtures__", "skills");
 
 function sha256(file: string): string {
-  return "sha256:" + crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+  return sha256Digest(fs.readFileSync(file));
 }
 
 function makeTempSkill(files: Record<string, string>): string {
@@ -40,6 +42,15 @@ function makeTempSkill(files: Record<string, string>): string {
     fs.writeFileSync(abs, content);
   }
   return path.join(dir, "SKILL.md");
+}
+
+function bundledSkill(name: string, files: Record<string, string> = {}) {
+  return createTestSkill({
+    name,
+    baseName: name,
+    path: makeTempSkill({ "SKILL.md": `---\nname: ${name}\ndescription: ${name}\n---\n`, ...files }),
+    source: BUNDLED_SKILL_SOURCE,
+  });
 }
 
 async function connect(skillState: SkillState, register = registerSkillResources) {
@@ -63,8 +74,8 @@ function getSkill(client: Client, uri: string) {
   return client.request({ method: SKILLS_GET_METHOD, params: { uri } }, SkillsGetResultSchema);
 }
 
-/** The with-resources fixture discovered under a "test" prefix. */
-function withResourcesState(): SkillState {
+/** The with-resources fixture (frontmatter name "resourceful") under a "test" prefix. */
+function resourcefulState(): SkillState {
   const skills = discoverSkills(FIXTURES_DIR, createTestSource()).filter(
     (s) => s.baseName === "resourceful"
   );
@@ -76,7 +87,7 @@ beforeEach(() => clearDigestCache());
 
 describe("skills/list (SEP-2640)", () => {
   it("returns one entry per skill with a complete digest manifest", async () => {
-    const client = await connect(withResourcesState());
+    const client = await connect(resourcefulState());
     const result = await listSkills(client);
 
     expect(result.skills).toHaveLength(1);
@@ -104,7 +115,7 @@ describe("skills/list (SEP-2640)", () => {
   });
 
   it("carries the SKILL.md frontmatter verbatim", async () => {
-    const client = await connect(withResourcesState());
+    const client = await connect(resourcefulState());
     const { skills } = await listSkills(client);
 
     const raw = fs.readFileSync(path.join(FIXTURES_DIR, "with-resources", "SKILL.md"), "utf-8");
@@ -114,14 +125,14 @@ describe("skills/list (SEP-2640)", () => {
   });
 
   it("omits ttlMs and cacheScope on a pre-2026-07-28 connection", async () => {
-    const client = await connect(withResourcesState());
+    const client = await connect(resourcefulState());
     const result = await listSkills(client);
     expect(result).not.toHaveProperty("ttlMs");
     expect(result).not.toHaveProperty("cacheScope");
   });
 
   it("reads the live skill map on every request", async () => {
-    const state = withResourcesState();
+    const state = resourcefulState();
     const client = await connect(state);
     expect((await listSkills(client)).skills).toHaveLength(1);
 
@@ -129,20 +140,10 @@ describe("skills/list (SEP-2640)", () => {
     expect((await listSkills(client)).skills).toHaveLength(0);
   });
 
-  it("paginates with an opaque cursor and never splits an entry", async () => {
-    const a = createTestSkill({
-      name: "a",
-      baseName: "a",
-      path: makeTempSkill({ "SKILL.md": "---\nname: a\ndescription: A\n---\n" }),
-      source: BUNDLED_SKILL_SOURCE,
-    });
-    const b = createTestSkill({
-      name: "b",
-      baseName: "b",
-      path: makeTempSkill({ "SKILL.md": "---\nname: b\ndescription: B\n---\n", "x.md": "x" }),
-      source: BUNDLED_SKILL_SOURCE,
-    });
-    const client = await connect(createTestSkillState([a, b]), (server, state) =>
+  it("paginates in URI order and never splits an entry", async () => {
+    const a = bundledSkill("a");
+    const b = bundledSkill("b", { "x.md": "x" });
+    const client = await connect(createTestSkillState([b, a]), (server, state) =>
       registerSkillMethods(server, state, { pageSize: 1 })
     );
 
@@ -156,8 +157,28 @@ describe("skills/list (SEP-2640)", () => {
     expect(second.nextCursor).toBeUndefined();
   });
 
+  it("neither skips nor repeats a skill when the map changes between pages", async () => {
+    const [a, b, c, d] = ["a", "b", "c", "d"].map((n) => bundledSkill(n));
+    const state = createTestSkillState([a, b, c, d]);
+    const client = await connect(state, (server, s) =>
+      registerSkillMethods(server, s, { pageSize: 2 })
+    );
+
+    const first = await listSkills(client);
+    expect(first.skills.map((s) => s.uri)).toEqual(["skill://a/SKILL.md", "skill://b/SKILL.md"]);
+
+    // A refresh removes a skill from the front and adds one at the end.
+    state.skillMap = createTestSkillState([b, c, d, bundledSkill("e")]).skillMap;
+
+    const second = await listSkills(client, first.nextCursor);
+    expect(second.skills.map((s) => s.uri)).toEqual(["skill://c/SKILL.md", "skill://d/SKILL.md"]);
+    const third = await listSkills(client, second.nextCursor);
+    expect(third.skills.map((s) => s.uri)).toEqual(["skill://e/SKILL.md"]);
+    expect(third.nextCursor).toBeUndefined();
+  });
+
   it("rejects a malformed cursor with -32602", async () => {
-    const client = await connect(withResourcesState());
+    const client = await connect(resourcefulState());
     await expect(listSkills(client, "not-a-cursor")).rejects.toMatchObject({ code: -32602 });
   });
 
@@ -175,7 +196,7 @@ describe("skills/list (SEP-2640)", () => {
 
 describe("skills/get (SEP-2640)", () => {
   it("returns the same entry skills/list does", async () => {
-    const client = await connect(withResourcesState());
+    const client = await connect(resourcefulState());
     const listed = (await listSkills(client)).skills[0];
     const got = await getSkill(client, listed.uri);
     expect(got.skill).toEqual(listed);
@@ -183,7 +204,7 @@ describe("skills/get (SEP-2640)", () => {
   });
 
   it("returns -32602 for a URI that is not a served skill", async () => {
-    const client = await connect(withResourcesState());
+    const client = await connect(resourcefulState());
     await expect(getSkill(client, "skill://test/nope/SKILL.md")).rejects.toMatchObject({
       code: -32602,
     });
@@ -191,21 +212,23 @@ describe("skills/get (SEP-2640)", () => {
       getSkill(client, "skill://test/resourceful/scripts/example.py")
     ).rejects.toMatchObject({ code: -32602 });
   });
+
+  it("returns -32603 for a served skill whose SKILL.md cannot be read", async () => {
+    const gone = createTestSkill({
+      name: "gone",
+      baseName: "gone",
+      path: "/nonexistent/gone/SKILL.md",
+      source: BUNDLED_SKILL_SOURCE,
+    });
+    const client = await connect(createTestSkillState([gone]));
+    await expect(getSkill(client, "skill://gone/SKILL.md")).rejects.toMatchObject({ code: -32603 });
+  });
 });
 
 describe("buildSkillEntry", () => {
   it("re-hashes a file after it changes and reuses the digest otherwise", () => {
-    const skillMd = makeTempSkill({
-      "SKILL.md": "---\nname: cached\ndescription: C\n---\n",
-      "notes.md": "one",
-    });
-    const skill = createTestSkill({
-      name: "cached",
-      baseName: "cached",
-      path: skillMd,
-      source: BUNDLED_SKILL_SOURCE,
-    });
-    const notes = path.join(path.dirname(skillMd), "notes.md");
+    const skill = bundledSkill("cached", { "notes.md": "one" });
+    const notes = path.join(path.dirname(skill.path), "notes.md");
 
     const before = buildSkillEntry(skill)!;
     const again = buildSkillEntry(skill)!;
@@ -228,47 +251,72 @@ describe("buildSkillEntry", () => {
   });
 
   it("excludes hidden files from the manifest", () => {
-    const skillMd = makeTempSkill({
-      "SKILL.md": "---\nname: hidden\ndescription: H\n---\n",
-      ".env": "SECRET=1",
-      "ok.md": "fine",
-    });
-    const skill = createTestSkill({
-      name: "hidden",
-      baseName: "hidden",
-      path: skillMd,
-      source: BUNDLED_SKILL_SOURCE,
-    });
+    const skill = bundledSkill("hidden", { ".env": "SECRET=1", "ok.md": "fine" });
     const uris = (buildSkillEntry(skill)!.resources as { uri: string }[]).map((r) => r.uri);
     expect(uris).toEqual(["skill://hidden/SKILL.md", "skill://hidden/ok.md"]);
+  });
+
+  it("accepts trailing whitespace on the frontmatter delimiter lines", () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "skilljack-fm-"));
+    fs.mkdirSync(path.join(parent, "spaced"));
+    fs.writeFileSync(
+      path.join(parent, "spaced", "SKILL.md"),
+      "---  \nname: spaced\ndescription: has trailing spaces\n---\t\nbody\n---\nnot frontmatter\n"
+    );
+    const skills = discoverSkills(parent, BUNDLED_SKILL_SOURCE);
+    expect(skills).toHaveLength(1);
+    const [skill] = skills;
+    expect(skill.frontmatter).toEqual({ name: "spaced", description: "has trailing spaces" });
+  });
+});
+
+describe("digest cache", () => {
+  it("prunes entries for files outside the current skill directories", () => {
+    const kept = bundledSkill("kept", { "k.md": "k" });
+    const dropped = bundledSkill("dropped", { "d.md": "d" });
+    buildSkillEntry(kept);
+    buildSkillEntry(dropped);
+    const droppedFile = path.join(path.dirname(dropped.path), "d.md");
+    const keptFile = path.join(path.dirname(kept.path), "k.md");
+
+    pruneDigestCache(createTestSkillState([kept]));
+
+    // A pruned path is re-hashed on next access; a kept one is served from cache.
+    fs.unlinkSync(droppedFile);
+    expect(fileDigest(droppedFile)).toBeNull();
+    expect(fileDigest(keptFile)).not.toBeNull();
   });
 });
 
 describe("resources/read stays within the manifest", () => {
   it("refuses a hidden file even though it exists on disk", async () => {
-    const skillMd = makeTempSkill({
-      "SKILL.md": "---\nname: hidden\ndescription: H\n---\n",
-      ".env": "SECRET=1",
-    });
-    const client = await connect(
-      createTestSkillState([
-        createTestSkill({
-          name: "hidden",
-          baseName: "hidden",
-          path: skillMd,
-          source: BUNDLED_SKILL_SOURCE,
-        }),
-      ])
-    );
+    const client = await connect(createTestSkillState([bundledSkill("hidden", { ".env": "SECRET=1" })]));
     await expect(client.readResource({ uri: "skill://hidden/.env" })).rejects.toMatchObject({
       code: -32602,
     });
   });
 
-  it("returns -32602 for a URI no skill serves", async () => {
-    const client = await connect(withResourcesState());
+  it("refuses a file under node_modules and a directory", async () => {
+    const client = await connect(
+      createTestSkillState([bundledSkill("nm", { "node_modules/x/index.js": "x", "docs/a.md": "a" })])
+    );
+    await expect(
+      client.readResource({ uri: "skill://nm/node_modules/x/index.js" })
+    ).rejects.toMatchObject({ code: -32602 });
+    await expect(client.readResource({ uri: "skill://nm/docs" })).rejects.toMatchObject({
+      code: -32602,
+    });
+    const ok = await client.readResource({ uri: "skill://nm/docs/a.md" });
+    expect(ok.contents[0]).toMatchObject({ text: "a" });
+  });
+
+  it("returns -32602 for a URI no skill serves and for malformed percent-encoding", async () => {
+    const client = await connect(resourcefulState());
     await expect(
       client.readResource({ uri: "skill://test/nope/SKILL.md" })
+    ).rejects.toMatchObject({ code: -32602 });
+    await expect(
+      client.readResource({ uri: "skill://test/resourceful/%E0%A4%A" })
     ).rejects.toMatchObject({ code: -32602 });
   });
 });

@@ -87,7 +87,7 @@ function parseFrontmatter(content: string): { metadata: Record<string, unknown>;
   // Line-anchored so a `---` inside the body or a YAML value does not end the
   // frontmatter early. Same match the SEP-2640 SDK uses, so the entry's
   // verbatim `frontmatter` agrees with what a host parses from the file.
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  const match = content.match(/^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/);
   if (!match) {
     throw new Error("SKILL.md frontmatter not properly closed with ---");
   }

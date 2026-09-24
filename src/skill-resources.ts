@@ -32,7 +32,7 @@ import {
   parseSkillResourceUri,
   buildSkillIndex,
 } from "./skill-discovery.js";
-import { isPathWithinBase, listSkillFiles, MAX_FILE_SIZE, SkillState } from "./skill-tool.js";
+import { isListedSkillFile, listSkillFiles, MAX_FILE_SIZE, SkillState } from "./skill-tool.js";
 
 /** URI scheme prefix for skill resources. */
 const SCHEME = "skill://";
@@ -180,7 +180,12 @@ function registerSkillTemplate(
     },
     async (resourceUri) => {
       const uriStr = resourceUri.toString();
-      const parsed = parseSkillResourceUri(uriStr, skillState.skillMap);
+      let parsed: ReturnType<typeof parseSkillResourceUri> = null;
+      try {
+        parsed = parseSkillResourceUri(uriStr, skillState.skillMap);
+      } catch {
+        // Malformed percent-encoding: treated as an unknown resource below.
+      }
 
       // Unknown resources are -32602, the code SEP-2640 prescribes for
       // resources/read of a skill file the server does not serve.
@@ -218,19 +223,22 @@ function registerSkillTemplate(
       // entry lists are served, so a read can never return content the
       // manifest does not cover (hidden files, symlinks, node_modules).
       const skillDir = path.dirname(skill.path);
-      const fullPath = path.resolve(skillDir, fileRelPath);
-
-      if (
-        !isPathWithinBase(fullPath, skillDir) ||
-        !listSkillFiles(skillDir).includes(fileRelPath)
-      ) {
-        throw new ProtocolError(
+      const notServed = () =>
+        new ProtocolError(
           ProtocolErrorCode.InvalidParams,
           `Not a file of skill "${skill.baseName}": ${fileRelPath}`
         );
+      if (!isListedSkillFile(skillDir, fileRelPath)) {
+        throw notServed();
       }
 
-      const stat = fs.statSync(fullPath);
+      const fullPath = path.join(skillDir, fileRelPath);
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(fullPath);
+      } catch {
+        throw notServed();
+      }
       if (stat.size > MAX_FILE_SIZE) {
         throw new ProtocolError(
           ProtocolErrorCode.InternalError,

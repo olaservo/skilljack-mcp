@@ -2,11 +2,16 @@
  * SEP-2640 skill entries: the `skills/list` and `skills/get` methods.
  *
  * Skilljack rebuilds its skill map whenever a source changes, so both
- * handlers read `skillState` on every request rather than snapshotting it at
- * registration. Method names, wire schemas, limits and the digest helper come
- * from `@olaservo/ext-skills`. Entries are assembled here so their URIs are
- * byte-identical to the ones `resources/list` advertises: the SDK's own entry
- * builder does not percent-encode path segments, and skilljack does.
+ * handlers read `skillState` on every request. Method names, wire schemas,
+ * limits and the digest helper come from `@olaservo/ext-skills`. Entries are
+ * assembled here so their URIs are byte-identical to the ones `resources/list`
+ * advertises: the SDK's own entry builder does not percent-encode path
+ * segments, and skilljack does.
+ *
+ * Pagination is keyed on the last URI of the previous page (entries are
+ * sorted by URI), so a refresh between two page requests neither skips nor
+ * repeats a skill. Offset cursors, which the SDK uses over its static
+ * snapshot, would.
  *
  * Per-file digests are cached by (path, mtime, size), so a listing re-hashes
  * only files that changed since the last request.
@@ -92,6 +97,28 @@ export function clearDigestCache(): void {
   digestCache.clear();
 }
 
+/**
+ * Drop cached digests for files outside every skill directory currently in
+ * `skillState`. Called after a refresh so removed or re-synced skills do not
+ * leave entries behind for the life of the process.
+ */
+export function pruneDigestCache(skillState: SkillState): void {
+  const dirs = new Set<string>();
+  for (const skill of skillState.skillMap.values()) {
+    dirs.add(path.dirname(skill.path));
+  }
+  for (const key of digestCache.keys()) {
+    let keep = false;
+    for (const dir of dirs) {
+      if (key.startsWith(dir + path.sep)) {
+        keep = true;
+        break;
+      }
+    }
+    if (!keep) digestCache.delete(key);
+  }
+}
+
 const limitWarned = new Set<string>();
 
 function warnIfOverLimits(uri: string, resources: SkillResourceRef[]): void {
@@ -111,18 +138,23 @@ function warnIfOverLimits(uri: string, resources: SkillResourceRef[]): void {
   );
 }
 
+/** URI of a skill's SKILL.md, which is also the skill's entry URI. */
+export function skillEntryUri(skill: SkillMetadata): string {
+  return buildSkillResourceUri(skill, "SKILL.md");
+}
+
 /**
  * Build a skill's entry. `resources` lists SKILL.md first, then every file
  * `listSkillFiles` enumerates, which is the same set `resources/list`
  * advertises and `resources/read` serves. Returns null when SKILL.md is
- * unreadable (removed between refreshes).
+ * unreadable.
  */
 export function buildSkillEntry(skill: SkillMetadata): SkillEntry | null {
   const md = fileDigest(skill.path);
   if (!md) return null;
 
   const skillDir = path.dirname(skill.path);
-  const uri = buildSkillResourceUri(skill, "SKILL.md");
+  const uri = skillEntryUri(skill);
   const resources: SkillResourceRef[] = [{ uri, digest: md.digest, size: md.size }];
   for (const rel of listSkillFiles(skillDir)) {
     const f = fileDigest(path.join(skillDir, rel));
@@ -133,37 +165,79 @@ export function buildSkillEntry(skill: SkillMetadata): SkillEntry | null {
   return { uri, frontmatter: skill.frontmatter, resources };
 }
 
-/** Entries for every skill currently in `skillState`. */
-export function listSkillEntries(skillState: SkillState): SkillEntry[] {
-  const entries: SkillEntry[] = [];
-  for (const skill of skillState.skillMap.values()) {
-    const entry = buildSkillEntry(skill);
-    if (entry) entries.push(entry);
-  }
-  return entries;
+function compareUris(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
-/** Entry for the skill whose SKILL.md URI is `uri`, or null if none is served there. */
-export function getSkillEntry(skillState: SkillState, uri: string): SkillEntry | null {
-  for (const skill of skillState.skillMap.values()) {
-    if (buildSkillResourceUri(skill, "SKILL.md") === uri) {
-      return buildSkillEntry(skill);
+/** Every skill in `skillState` with its entry URI, sorted by URI. */
+function sortedSkills(skillState: SkillState): Array<{ uri: string; skill: SkillMetadata }> {
+  return Array.from(skillState.skillMap.values(), (skill) => ({ uri: skillEntryUri(skill), skill })).sort(
+    (a, b) => compareUris(a.uri, b.uri)
+  );
+}
+
+/** Cursor payload: the URI of the last entry on the previous page. */
+function decodeCursor(cursor: string | undefined): string | undefined {
+  if (cursor === undefined) return undefined;
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, "base64").toString("utf-8")) as unknown;
+    if (parsed && typeof parsed === "object" && typeof (parsed as { after?: unknown }).after === "string") {
+      return (parsed as { after: string }).after;
     }
+  } catch {
+    // fall through
   }
-  return null;
+  throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Invalid cursor: ${cursor}`);
 }
 
-function decodeCursor(cursor: string | undefined): number {
-  if (cursor === undefined) return 0;
-  const n = parseInt(Buffer.from(cursor, "base64").toString("utf-8"), 10);
-  if (!Number.isInteger(n) || n < 0) {
-    throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Invalid cursor: ${cursor}`);
-  }
-  return n;
+function encodeCursor(after: string): string {
+  return Buffer.from(JSON.stringify({ after }), "utf-8").toString("base64");
 }
 
-function encodeCursor(offset: number): string {
-  return Buffer.from(String(offset), "utf-8").toString("base64");
+/**
+ * One page of entries, sorted by URI. Entries are built only for the page
+ * returned. `nextCursor` is set when more skills follow.
+ */
+export function listSkillEntries(
+  skillState: SkillState,
+  cursor?: string,
+  pageSize: number = DEFAULT_SKILLS_PAGE_SIZE
+): { skills: SkillEntry[]; nextCursor?: string } {
+  const all = sortedSkills(skillState);
+  const after = decodeCursor(cursor);
+  let start = 0;
+  if (after !== undefined) {
+    start = all.findIndex((x) => compareUris(x.uri, after) > 0);
+    if (start === -1) start = all.length;
+  }
+  const page = all.slice(start, start + pageSize);
+  const skills: SkillEntry[] = [];
+  for (const { skill } of page) {
+    const entry = buildSkillEntry(skill);
+    if (entry) skills.push(entry);
+  }
+  const hasMore = start + page.length < all.length;
+  return hasMore ? { skills, nextCursor: encodeCursor(page[page.length - 1].uri) } : { skills };
+}
+
+/**
+ * Entry for the skill whose SKILL.md URI is `uri`. Throws -32602 when no
+ * skill is served there and -32603 when one is but its SKILL.md cannot be
+ * read right now.
+ */
+export function getSkillEntry(skillState: SkillState, uri: string): SkillEntry {
+  for (const skill of skillState.skillMap.values()) {
+    if (skillEntryUri(skill) !== uri) continue;
+    const entry = buildSkillEntry(skill);
+    if (!entry) {
+      throw new ProtocolError(
+        ProtocolErrorCode.InternalError,
+        `SKILL.md for ${uri} could not be read`
+      );
+    }
+    return entry;
+  }
+  throw new ProtocolError(ProtocolErrorCode.InvalidParams, `No skill is served at ${uri}`);
 }
 
 const PROTOCOL_VERSION_META_KEY = "io.modelcontextprotocol/protocolVersion";
@@ -199,31 +273,18 @@ export function registerSkillMethods(
   server.server.setRequestHandler(
     SKILLS_LIST_METHOD,
     { params: SkillsListParamsSchema, result: SkillsListResultSchema },
-    async (params, ctx): Promise<SkillsListResult> => {
-      const entries = listSkillEntries(skillState);
-      const offset = decodeCursor(params.cursor);
-      const page = entries.slice(offset, offset + pageSize);
-      const next = offset + page.length;
-      return {
-        skills: page,
-        ...(next < entries.length ? { nextCursor: encodeCursor(next) } : {}),
-        ...cachingAttributes(ctx, options),
-      };
-    }
+    async (params, ctx): Promise<SkillsListResult> => ({
+      ...listSkillEntries(skillState, params.cursor, pageSize),
+      ...cachingAttributes(ctx, options),
+    })
   );
 
   server.server.setRequestHandler(
     SKILLS_GET_METHOD,
     { params: SkillsGetParamsSchema, result: SkillsGetResultSchema },
-    async (params, ctx): Promise<SkillsGetResult> => {
-      const entry = getSkillEntry(skillState, params.uri);
-      if (!entry) {
-        throw new ProtocolError(
-          ProtocolErrorCode.InvalidParams,
-          `No skill is served at ${params.uri}`
-        );
-      }
-      return { skill: entry, ...cachingAttributes(ctx, options) };
-    }
+    async (params, ctx): Promise<SkillsGetResult> => ({
+      skill: getSkillEntry(skillState, params.uri),
+      ...cachingAttributes(ctx, options),
+    })
   );
 }
