@@ -49,6 +49,7 @@ export interface SkillMetadata {
   baseName: string; // Original name from frontmatter (e.g., "commit")
   description: string;
   path: string; // Full path to SKILL.md
+  frontmatter: Record<string, unknown>; // Verbatim SKILL.md frontmatter (SEP-2640 entry field)
   disableModelInvocation?: boolean; // When true, exclude from tool description
   userInvocable?: boolean; // When false, exclude from prompts (default: true)
   // Computed effective values (after config overrides applied)
@@ -83,13 +84,16 @@ function parseFrontmatter(content: string): { metadata: Record<string, unknown>;
     throw new Error("SKILL.md must start with YAML frontmatter (---)");
   }
 
-  const parts = content.split("---");
-  if (parts.length < 3) {
+  // Line-anchored so a `---` inside the body or a YAML value does not end the
+  // frontmatter early. Same match the SEP-2640 SDK uses, so the entry's
+  // verbatim `frontmatter` agrees with what a host parses from the file.
+  const match = content.match(/^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/);
+  if (!match) {
     throw new Error("SKILL.md frontmatter not properly closed with ---");
   }
 
-  const frontmatterStr = parts[1];
-  const body = parts.slice(2).join("---").trim();
+  const frontmatterStr = match[1];
+  const body = content.slice(match[0].length).trim();
 
   const metadata = parseYaml(frontmatterStr) as Record<string, unknown>;
   if (typeof metadata !== "object" || metadata === null) {
@@ -253,6 +257,7 @@ export function discoverSkills(skillsDir: string, source?: SkillSource): SkillMe
         baseName,
         description: description.trim(),
         path: skillMdPath,
+        frontmatter: metadata,
         disableModelInvocation: disableModelInvocation === true,
         userInvocable: userInvocable !== false, // Default to true
         // Initialize effective values from frontmatter (overrides applied later)

@@ -29,6 +29,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverSkills, createSkillMap, applyInvocationOverrides, SkillSource, DEFAULT_SKILL_SOURCE, BUNDLED_SKILL_SOURCE, warnLargeSkillCount } from "./skill-discovery.js";
 import { registerSkillTool, getToolDescription, getServerInstructions, SkillState, CatalogMode } from "./skill-tool.js";
+import { pruneDigestCache } from "./skill-entries.js";
 import { registerSkillResources } from "./skill-resources.js";
 import { registerSkillPrompts, refreshPrompts, PromptRegistry } from "./skill-prompts.js";
 import { startHttpServer } from "./http-transport.js";
@@ -450,6 +451,7 @@ function refreshSkillState(skillsDirs: string[]): void {
 
   // Update shared state
   skillState.skillMap = createSkillMap(skills);
+  pruneDigestCache(skillState);
 
   console.error(`Skills refreshed: ${oldCount} -> ${skills.length} skill(s)`);
   warnLargeSkillCount(skills.length);

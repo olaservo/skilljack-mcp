@@ -61,6 +61,7 @@
   "dependencies": {
     "@modelcontextprotocol/node": "^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",
+    "@olaservo/ext-skills": "^0.16.0",
     "chokidar": "^5.0.0",
     "simple-git": "^3.27.0",
     "tar": "^7.4.0",

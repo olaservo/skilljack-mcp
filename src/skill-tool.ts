@@ -276,6 +276,43 @@ export function listSkillFiles(skillDir: string, subPath: string = "", depth: nu
 }
 
 /**
+ * Whether `rel` names a file `listSkillFiles(skillDir)` would enumerate,
+ * answered with per-segment checks and one lstat per path component instead
+ * of a directory walk. Applies the same rules: no hidden segments, no
+ * node_modules, no symlinks, no SKILL.md, depth at most MAX_DIRECTORY_DEPTH.
+ */
+export function isListedSkillFile(skillDir: string, rel: string): boolean {
+  if (rel === "" || path.isAbsolute(rel)) return false;
+  const segments = rel.split("/");
+  const dirs = segments.slice(0, -1);
+  const leaf = segments[segments.length - 1];
+  if (dirs.length > MAX_DIRECTORY_DEPTH) return false;
+  for (const seg of segments) {
+    if (seg === "" || seg === "." || seg === ".." || seg.startsWith(".")) return false;
+  }
+  if (dirs.includes("node_modules")) return false;
+  if (leaf === "SKILL.md" || leaf === "skill.md") return false;
+
+  let current = skillDir;
+  for (const seg of dirs) {
+    current = path.join(current, seg);
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(current);
+    } catch {
+      return false;
+    }
+    // lstat reports a symlink as a symlink, never as a directory.
+    if (!stat.isDirectory()) return false;
+  }
+  try {
+    return fs.lstatSync(path.join(current, leaf)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Register the "skill-resource" tool with the MCP server.
  *
  * This tool provides access to files within a skill's directory structure,
