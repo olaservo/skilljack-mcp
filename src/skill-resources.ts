@@ -16,6 +16,7 @@
  */
 
 import * as fs from "node:fs";
+import { isUtf8 } from "node:buffer";
 import * as path from "node:path";
 import {
   McpServer,
@@ -24,6 +25,7 @@ import {
   ProtocolErrorCode,
 } from "@modelcontextprotocol/server";
 import type { Resource, ReadResourceResult } from "@modelcontextprotocol/server";
+import { getMimeType as sdkMimeType, isTextMimeType } from "@olaservo/ext-skills";
 import { registerSkillMethods } from "./skill-entries.js";
 import {
   loadSkillContent,
@@ -37,26 +39,46 @@ import { isListedSkillFile, listSkillFiles, MAX_FILE_SIZE, SkillState } from "./
 /** URI scheme prefix for skill resources. */
 const SCHEME = "skill://";
 
+/** Bytes read to decide whether a file of unknown type is text. */
+const SNIFF_BYTES = 8192;
+
 /**
- * Get MIME type based on file extension.
+ * Whether the start of a file is valid UTF-8. A multibyte character cut at
+ * the sniff boundary is tolerated by retrying without the last few bytes.
  */
-function getMimeType(filePath: string): string {
-  const ext = path.extname(filePath).toLowerCase();
-  const mimeTypes: Record<string, string> = {
-    ".md": "text/markdown",
-    ".ts": "text/typescript",
-    ".js": "text/javascript",
-    ".json": "application/json",
-    ".yaml": "text/yaml",
-    ".yml": "text/yaml",
-    ".txt": "text/plain",
-    ".sh": "text/x-shellscript",
-    ".py": "text/x-python",
-    ".css": "text/css",
-    ".html": "text/html",
-    ".xml": "application/xml",
-  };
-  return mimeTypes[ext] || "text/plain";
+function sniffIsUtf8(fullPath: string): boolean {
+  let fd: number;
+  try {
+    fd = fs.openSync(fullPath, "r");
+  } catch {
+    return false;
+  }
+  try {
+    const buf = Buffer.alloc(SNIFF_BYTES);
+    const n = fs.readSync(fd, buf, 0, SNIFF_BYTES, 0);
+    const head = buf.subarray(0, n);
+    if (isUtf8(head)) return true;
+    if (n < SNIFF_BYTES) return false;
+    for (let cut = 1; cut <= 3; cut++) {
+      if (isUtf8(head.subarray(0, n - cut))) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * MIME type for a skill file: the SDK's table for known extensions, and for
+ * anything else text/plain when the bytes look like UTF-8, otherwise
+ * application/octet-stream. Used by resources/list and resources/read alike.
+ */
+export function skillFileMimeType(fullPath: string, fileRelPath: string): string {
+  const fromTable = sdkMimeType(fileRelPath);
+  if (fromTable !== "application/octet-stream") return fromTable;
+  return sniffIsUtf8(fullPath) ? "text/plain" : fromTable;
 }
 
 /**
@@ -140,7 +162,7 @@ function registerSkillTemplate(
             const fileResource: Resource = {
               uri: buildSkillResourceUri(skill, file),
               name: `${skill.baseName}/${file}`,
-              mimeType: getMimeType(file),
+              mimeType: skillFileMimeType(path.resolve(skillDir, file), file),
               description: `Supporting file in ${skill.baseName}`,
               annotations: { audience, priority },
             };
@@ -175,7 +197,6 @@ function registerSkillTemplate(
       },
     }),
     {
-      mimeType: "text/markdown",
       description: "Agent Skill resource (SEP-2640)",
     },
     async (resourceUri) => {
@@ -246,13 +267,18 @@ function registerSkillTemplate(
         );
       }
 
-      const content = fs.readFileSync(fullPath, "utf-8");
+      // Only bytes that are valid UTF-8 go out as text, so a host hashing
+      // what it receives gets the same bytes the entry digests. Anything
+      // else is a base64 blob, whatever its label says.
+      const bytes = fs.readFileSync(fullPath);
+      const mimeType = skillFileMimeType(fullPath, fileRelPath);
+      const asText = isTextMimeType(mimeType) && isUtf8(bytes);
       return {
         contents: [
           {
             uri: uriStr,
-            mimeType: getMimeType(fileRelPath),
-            text: content,
+            mimeType,
+            ...(asText ? { text: bytes.toString("utf-8") } : { blob: bytes.toString("base64") }),
           },
         ],
       };
