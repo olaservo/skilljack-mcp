@@ -16,6 +16,7 @@
  */
 
 import * as fs from "node:fs";
+import { isUtf8 } from "node:buffer";
 import * as path from "node:path";
 import {
   McpServer,
@@ -38,48 +39,46 @@ import { isListedSkillFile, listSkillFiles, MAX_FILE_SIZE, SkillState } from "./
 /** URI scheme prefix for skill resources. */
 const SCHEME = "skill://";
 
-/**
- * Text extensions the SDK's MIME table does not know. Anything not text by
- * this table or the SDK's is served as a base64 blob, so its bytes reach the
- * host unchanged and match the entry's digest.
- */
-const EXTRA_TEXT_TYPES: Record<string, string> = {
-  ".mjs": "text/javascript",
-  ".cjs": "text/javascript",
-  ".jsx": "text/javascript",
-  ".tsx": "text/typescript",
-  ".toml": "text/plain",
-  ".ini": "text/plain",
-  ".cfg": "text/plain",
-  ".conf": "text/plain",
-  ".csv": "text/csv",
-  ".tsv": "text/tab-separated-values",
-  ".rst": "text/x-rst",
-  ".tex": "text/x-tex",
-  ".diff": "text/x-diff",
-  ".patch": "text/x-diff",
-  ".rb": "text/x-ruby",
-  ".go": "text/x-go",
-  ".rs": "text/x-rust",
-  ".java": "text/x-java",
-  ".kt": "text/x-kotlin",
-  ".swift": "text/x-swift",
-  ".c": "text/x-c",
-  ".h": "text/x-c",
-  ".cpp": "text/x-c++",
-  ".hpp": "text/x-c++",
-  ".r": "text/x-r",
-  ".ps1": "text/plain",
-  ".bat": "text/plain",
-};
+/** Bytes read to decide whether a file of unknown type is text. */
+const SNIFF_BYTES = 8192;
 
 /**
- * MIME type for a skill file. Falls back to the SDK's table, which returns
- * application/octet-stream for anything it does not recognise.
+ * Whether the start of a file is valid UTF-8. A multibyte character cut at
+ * the sniff boundary is tolerated by retrying without the last few bytes.
  */
-function getMimeType(filePath: string): string {
-  const ext = path.extname(filePath).toLowerCase();
-  return EXTRA_TEXT_TYPES[ext] ?? sdkMimeType(filePath);
+function sniffIsUtf8(fullPath: string): boolean {
+  let fd: number;
+  try {
+    fd = fs.openSync(fullPath, "r");
+  } catch {
+    return false;
+  }
+  try {
+    const buf = Buffer.alloc(SNIFF_BYTES);
+    const n = fs.readSync(fd, buf, 0, SNIFF_BYTES, 0);
+    const head = buf.subarray(0, n);
+    if (isUtf8(head)) return true;
+    if (n < SNIFF_BYTES) return false;
+    for (let cut = 1; cut <= 3; cut++) {
+      if (isUtf8(head.subarray(0, n - cut))) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * MIME type for a skill file: the SDK's table for known extensions, and for
+ * anything else text/plain when the bytes look like UTF-8, otherwise
+ * application/octet-stream. Used by resources/list and resources/read alike.
+ */
+export function skillFileMimeType(fullPath: string, fileRelPath: string): string {
+  const fromTable = sdkMimeType(fileRelPath);
+  if (fromTable !== "application/octet-stream") return fromTable;
+  return sniffIsUtf8(fullPath) ? "text/plain" : fromTable;
 }
 
 /**
@@ -163,7 +162,7 @@ function registerSkillTemplate(
             const fileResource: Resource = {
               uri: buildSkillResourceUri(skill, file),
               name: `${skill.baseName}/${file}`,
-              mimeType: getMimeType(file),
+              mimeType: skillFileMimeType(path.resolve(skillDir, file), file),
               description: `Supporting file in ${skill.baseName}`,
               annotations: { audience, priority },
             };
@@ -198,7 +197,6 @@ function registerSkillTemplate(
       },
     }),
     {
-      mimeType: "text/markdown",
       description: "Agent Skill resource (SEP-2640)",
     },
     async (resourceUri) => {
@@ -269,18 +267,18 @@ function registerSkillTemplate(
         );
       }
 
-      // Text goes out as UTF-8 text, everything else as a base64 blob, so a
-      // host hashing what it receives gets the same bytes the entry digests.
+      // Only bytes that are valid UTF-8 go out as text, so a host hashing
+      // what it receives gets the same bytes the entry digests. Anything
+      // else is a base64 blob, whatever its label says.
       const bytes = fs.readFileSync(fullPath);
-      const mimeType = getMimeType(fileRelPath);
+      const mimeType = skillFileMimeType(fullPath, fileRelPath);
+      const asText = isTextMimeType(mimeType) && isUtf8(bytes);
       return {
         contents: [
           {
             uri: uriStr,
             mimeType,
-            ...(isTextMimeType(mimeType)
-              ? { text: bytes.toString("utf-8") }
-              : { blob: bytes.toString("base64") }),
+            ...(asText ? { text: bytes.toString("utf-8") } : { blob: bytes.toString("base64") }),
           },
         ],
       };

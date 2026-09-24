@@ -317,24 +317,40 @@ describe("resources/read stays within the manifest", () => {
     const skillDir = path.dirname(skill.path);
     fs.writeFileSync(path.join(skillDir, "logo.png"), png);
     fs.writeFileSync(path.join(skillDir, "font.ttf"), png);
+    // A text-looking name whose bytes are Latin-1, not UTF-8.
+    fs.writeFileSync(path.join(skillDir, "data.csv"), Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x0a]));
+    // Text with no extension at all.
+    fs.writeFileSync(path.join(skillDir, "Makefile"), "all:\n\techo ok\n");
     const client = await connect(createTestSkillState([skill]));
 
     const entry = (await listSkills(client)).skills[0];
-    const ref = (entry.resources as { uri: string; digest: string; size: number }[]).find((r) =>
-      r.uri.endsWith("/logo.png")
-    )!;
-    expect(ref.size).toBe(png.length);
+    const refs = entry.resources as { uri: string; digest: string; size: number }[];
+    const refOf = (name: string) => refs.find((r) => r.uri === `skill://bin/${name}`)!;
+    const listed = await client.listResources();
+    const listedType = (name: string) =>
+      listed.resources.find((r) => r.uri === `skill://bin/${name}`)!.mimeType;
 
-    for (const name of ["logo.png", "font.ttf"]) {
+    for (const [name, mimeType] of [
+      ["logo.png", "image/png"],
+      ["font.ttf", "application/octet-stream"],
+      ["data.csv", "application/octet-stream"],
+    ] as const) {
       const read = await client.readResource({ uri: `skill://bin/${name}` });
       const content = read.contents[0] as { blob?: string; text?: string; mimeType?: string };
-      expect(content.text).toBeUndefined();
+      expect(content.text, name).toBeUndefined();
+      expect(content.mimeType, name).toBe(mimeType);
+      expect(listedType(name), name).toBe(mimeType);
       const bytes = Buffer.from(content.blob!, "base64");
-      expect(bytes.equals(png)).toBe(true);
-      expect(sha256Digest(bytes)).toBe(ref.digest);
+      expect(bytes.length, name).toBe(refOf(name).size);
+      expect(sha256Digest(bytes), name).toBe(refOf(name).digest);
     }
-    const listed = await client.listResources();
-    expect(listed.resources.find((r) => r.uri === "skill://bin/logo.png")!.mimeType).toBe("image/png");
+
+    const make = await client.readResource({ uri: "skill://bin/Makefile" });
+    const makeContent = make.contents[0] as { text?: string; mimeType?: string };
+    expect(makeContent.mimeType).toBe("text/plain");
+    expect(listedType("Makefile")).toBe("text/plain");
+    expect(makeContent.text).toBe("all:\n\techo ok\n");
+    expect(sha256Digest(Buffer.from(makeContent.text!, "utf-8"))).toBe(refOf("Makefile").digest);
   });
 
   it("returns -32602 for a URI no skill serves and for malformed percent-encoding", async () => {
