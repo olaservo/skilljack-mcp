@@ -40,7 +40,7 @@ No v1 object ever flows into v2 code in-process, so the two halves can stay on d
 - Positional args: Skill directories, GitHub URLs, or well-known publisher URLs (e.g. `https://example.com/.well-known/agent-skills/`)
 - `--static`: Enable static mode (freeze skills at startup, no file watching)
 - `--http` / `--http=<port>`: Serve over stateless Streamable HTTP at `POST /mcp` instead of stdio (single token so it isn't parsed as a skill dir)
-- `--tools=<auto|always|never>`: Whether the `load-skill` and `skill-resource` tools are offered. `auto` (default) disables both after `initialize` when the client's capabilities carry `extensions["io.modelcontextprotocol/skills"]`, since such a host loads skills itself via `skills/list` / `skills/get` / `resources/read`. On stateless HTTP `auto` cannot see the handshake and leaves the tools on. Env: `SKILLJACK_TOOLS`. See `getToolsMode()` in index.ts / `installToolsMode()` in skill-tool.ts.
+- `--tools=<auto|always|never>`: Whether the `load-skill` and `skill-resource` tools are offered. `auto` (default) disables both after `initialize` when the client's capabilities carry `extensions["io.modelcontextprotocol/skills"]`, since such a host loads skills itself via `skills/list` / `skills/get` / `resources/read`. On stateless HTTP `auto` cannot see the handshake and behaves as `always`; with `--catalog=tool-description` it is ignored because the catalog lives in the tool description. The instructions catalog wording follows the mode. Env: `SKILLJACK_TOOLS`. See `getToolsMode()` in index.ts / `installToolsMode()` in skill-tool.ts.
 - `--catalog=<instructions|tool-description>`: Which single channel carries the `<available_skills>` catalog (never both). `instructions` (default): server `instructions` — survives tool search, but frozen at startup on stdio since the SDK can't update instructions. `tool-description` (legacy, **not recommended** — see Conventions): the `load-skill` tool description — dynamic via `tools/listChanged`, but deferred out of context by tool search, and each refresh invalidates the whole prompt cache. Kept as an escape hatch and as the evals' control condition. Env: `SKILLJACK_CATALOG`. See `getCatalogMode()` in index.ts / `CatalogMode` in skill-tool.ts.
 
 ## Project Structure
@@ -201,7 +201,7 @@ An entry carries the skill's verbatim `frontmatter` and a complete `resources` m
 
 ## Notifications Sent
 
-- `notifications/tools/list_changed` - When skills change (add/modify/remove)
+- `notifications/tools/list_changed` - When skills change (add/modify/remove). Also once right after `initialize` in `--tools=auto` when the client declares the skills extension and the skill tools are disabled (so `tools.listChanged` is declared true in that mode even under `--static`).
 - `notifications/prompts/list_changed` - When skills change (add/modify/remove)
 - `notifications/resources/list_changed` - When skills change
 - `notifications/resources/updated` - When subscribed resource files change. Also fired explicitly for `skill://index.json` from `refreshSkills()` so subscribers see add/remove changes even without an underlying SKILL.md modification.

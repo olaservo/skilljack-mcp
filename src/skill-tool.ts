@@ -111,22 +111,37 @@ export function getToolDescription(
  * tool description. The preamble names the tool because under tool search the
  * model may never see the tool description itself.
  */
-export function getCatalogInstructions(skillState: SkillState): string {
+export function getCatalogInstructions(
+  skillState: SkillState,
+  toolsMode: ToolsMode = "auto"
+): string {
   const allSkills = Array.from(skillState.skillMap.values());
   const modelInvocableSkills = getModelInvocableSkills(allSkills);
-  const usage =
+  const intro =
     "This server serves Agent Skills. Each <skill> below lists its name, description " +
-    "and the skill:// URI of its SKILL.md.\n\n" +
-    "If your host supports the MCP skills extension (io.modelcontextprotocol/skills), " +
-    "it loads a skill by that URI through its own skill loader and this server does " +
-    "not offer the `load-skill` tool. Otherwise call `load-skill` with the skill's " +
-    "name; it returns the complete SKILL.md content with step-by-step guidance, " +
-    "examples, and file references to follow.\n\n" +
+    "and the skill:// URI of its SKILL.md.\n\n";
+  const viaTool =
+    "call `load-skill` with the skill's name; it returns the complete SKILL.md " +
+    "content with step-by-step guidance, examples, and file references to follow.";
+  const howToLoad =
+    toolsMode === "never"
+      ? "This server offers no skill-loading tool. Load a skill by that URI through " +
+        "your host's skill loader (MCP skills extension " +
+        `${SKILLS_EXTENSION_ID}), or read the URI with resources/read.\n\n`
+      : toolsMode === "always"
+        ? "Hosts that support the MCP skills extension " +
+          `(${SKILLS_EXTENSION_ID}) may load a skill by that URI through their own ` +
+          `skill loader. Otherwise ${viaTool}\n\n`
+        : "If your host supports the MCP skills extension " +
+          `(${SKILLS_EXTENSION_ID}), it loads a skill by that URI through its own ` +
+          "skill loader and this server does not offer the `load-skill` tool. " +
+          `Otherwise ${viaTool}\n\n`;
+  const urgency =
     "IMPORTANT: When a skill is relevant to the user's task, you must load it " +
     "IMMEDIATELY as your first action. NEVER just announce or mention a skill " +
     "without actually loading it. This is a BLOCKING REQUIREMENT: load the skill " +
     "BEFORE generating any other response about the task.\n\n";
-  return usage + generateInstructions(modelInvocableSkills);
+  return intro + howToLoad + urgency + generateInstructions(modelInvocableSkills);
 }
 
 /**
@@ -137,10 +152,11 @@ export function getCatalogInstructions(skillState: SkillState): string {
  */
 export function getServerInstructions(
   skillState: SkillState,
-  catalogMode: CatalogMode = "instructions"
+  catalogMode: CatalogMode = "instructions",
+  toolsMode: ToolsMode = "auto"
 ): string | undefined {
   if (catalogMode === "instructions") {
-    return getCatalogInstructions(skillState);
+    return getCatalogInstructions(skillState, toolsMode);
   }
   return undefined;
 }
@@ -216,31 +232,45 @@ export function clientDeclaresSkillsExtension(server: McpServer): boolean {
   return extensions !== undefined && SKILLS_EXTENSION_ID in extensions;
 }
 
-function setToolsEnabled(tools: SkillTools, enabled: boolean): void {
-  for (const tool of [tools.loadSkill, tools.skillResource]) {
-    if (enabled) tool.enable();
-    else tool.disable();
-  }
+function disableSkillTools(tools: SkillTools): void {
+  tools.loadSkill.disable();
+  tools.skillResource.disable();
 }
 
 /**
  * Apply a ToolsMode. "never" disables the tools now; "auto" waits for the
  * initialize handshake and disables them when the client declared the skills
- * extension. Call before connect(). In auto mode the decision needs the
- * client's capabilities, so on the stateless HTTP transport (where tools/list
- * arrives on a fresh server instance) the tools stay enabled.
+ * extension. Call immediately before connect(), since it hooks
+ * `server.server.oninitialized` and a later assignment would replace it.
+ *
+ * In the legacy tool-description catalog mode the catalog lives in the
+ * load-skill description, so auto leaves the tools on there. On the stateless
+ * HTTP transport tools/list arrives on a fresh server instance, so callers
+ * pass "always" in place of "auto" (see buildCoreServer).
  */
-export function installToolsMode(server: McpServer, tools: SkillTools, mode: ToolsMode): void {
+export function installToolsMode(
+  server: McpServer,
+  tools: SkillTools,
+  mode: ToolsMode,
+  catalogMode: CatalogMode = "instructions"
+): void {
   if (mode === "always") return;
   if (mode === "never") {
-    setToolsEnabled(tools, false);
+    disableSkillTools(tools);
+    return;
+  }
+  if (catalogMode === "tool-description") {
+    console.error(
+      "--tools=auto has no effect with --catalog=tool-description: the skill catalog lives in the " +
+        "load-skill tool description, so the tools stay enabled for every client."
+    );
     return;
   }
   const previous = server.server.oninitialized;
   server.server.oninitialized = () => {
     previous?.();
     if (clientDeclaresSkillsExtension(server)) {
-      setToolsEnabled(tools, false);
+      disableSkillTools(tools);
       console.error(
         `Client declares ${SKILLS_EXTENSION_ID}; load-skill and skill-resource tools disabled (--tools=auto)`
       );

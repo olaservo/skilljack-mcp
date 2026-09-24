@@ -54,6 +54,20 @@ SKILLS_DIR=/path/to/skills,/path/to/more/skills skilljack-mcp
 
 Each directory is scanned along with its `.claude/skills/` and `skills/` subdirectories for skills. Duplicate skill names are handled by keeping the first occurrence.
 
+### Skill tools and skills-aware hosts
+
+```bash
+# Default: offer load-skill / skill-resource unless the client declares the
+# MCP skills extension (io.modelcontextprotocol/skills) in its capabilities
+skilljack-mcp --tools=auto /path/to/skills
+
+# Always offer the tools, or never register them
+skilljack-mcp --tools=always /path/to/skills
+skilljack-mcp --tools=never /path/to/skills
+```
+
+`--tools` (or `SKILLJACK_TOOLS`) controls the two skill tools. A host that declares the skills extension, as MCP Inspector and MCPJam do, loads skills itself through `skills/list`, `skills/get` and `resources/read`, so under `auto` the tools are disabled for it right after `initialize` and the catalog in server instructions points it at each skill's `skill://` URI. Over stateless HTTP `auto` behaves as `always`; with `--catalog=tool-description` it is ignored.
+
 ### Remote Sources
 
 In addition to local directories, skills can be pulled from two kinds of remote sources. Both are **default-deny** — a remote source is only synced if its origin is on the corresponding allowlist.
@@ -234,6 +248,8 @@ The skill catalog and the loaded SKILL.md body don't enumerate every file in a s
 **For skill authors:** Reference files using relative paths from the skill root (e.g., `snippets/tool.ts`, `references/api.md`). Keep your main SKILL.md under 500 lines; move detailed reference material to separate files. See the [Agent Skills specification](https://agentskills.io/specification) for complete authoring guidelines.
 
 ## Tools
+
+Both tools are offered to clients that do not declare the MCP skills extension. A client that declares it gets neither by default; see `--tools` under [Usage](#skill-tools-and-skills-aware-hosts).
 
 ### `load-skill`
 

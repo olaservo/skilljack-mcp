@@ -46,7 +46,11 @@ export function buildCoreServer(
   catalogMode: CatalogMode = "instructions",
   toolsMode: ToolsMode = "auto"
 ): McpServer {
-  const instructions = getServerInstructions(skillState, catalogMode);
+  // Stateless HTTP builds a server per request, so the initialize handshake
+  // is never visible to the instance that answers tools/list: "auto" cannot
+  // gate here and behaves as "always".
+  const effectiveToolsMode: ToolsMode = toolsMode === "auto" ? "always" : toolsMode;
+  const instructions = getServerInstructions(skillState, catalogMode, effectiveToolsMode);
 
   const server = new McpServer(
     { name: "skilljack-mcp", version: "0.13.0" },
@@ -64,9 +68,10 @@ export function buildCoreServer(
     }
   );
 
-  installToolsMode(server, registerSkillTool(server, skillState, catalogMode), toolsMode);
+  const skillTools = registerSkillTool(server, skillState, catalogMode);
   registerSkillResources(server, skillState);
   registerSkillPrompts(server, skillState);
+  installToolsMode(server, skillTools, effectiveToolsMode, catalogMode);
 
   return server;
 }
