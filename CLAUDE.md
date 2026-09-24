@@ -8,7 +8,7 @@
 - `npm run typecheck` - Typecheck both halves (`tsc --noEmit` for the server, `tsconfig.ui.json` for `src/ui`)
 - `npm run inspector` - Test with MCP Inspector
 
-CI (`.github/workflows/ci.yml`) runs `npm ci`, `npm run build`, and `npm test` on Node 20 for every push to `main` and every PR. Node 20+ is required (MCP TypeScript SDK v2 floor).
+CI (`.github/workflows/ci.yml`) runs `npm ci`, `npm run build`, and `npm test` on Node 22 for every push to `main` and every PR. Node 22+ is required; Node 20 reached end of life in April 2026.
 
 ## SDK split: server on v2, UI on v1
 
