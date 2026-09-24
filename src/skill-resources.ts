@@ -24,6 +24,7 @@ import {
   ProtocolErrorCode,
 } from "@modelcontextprotocol/server";
 import type { Resource, ReadResourceResult } from "@modelcontextprotocol/server";
+import { getMimeType as sdkMimeType, isTextMimeType } from "@olaservo/ext-skills";
 import { registerSkillMethods } from "./skill-entries.js";
 import {
   loadSkillContent,
@@ -38,25 +39,47 @@ import { isListedSkillFile, listSkillFiles, MAX_FILE_SIZE, SkillState } from "./
 const SCHEME = "skill://";
 
 /**
- * Get MIME type based on file extension.
+ * Text extensions the SDK's MIME table does not know. Anything not text by
+ * this table or the SDK's is served as a base64 blob, so its bytes reach the
+ * host unchanged and match the entry's digest.
+ */
+const EXTRA_TEXT_TYPES: Record<string, string> = {
+  ".mjs": "text/javascript",
+  ".cjs": "text/javascript",
+  ".jsx": "text/javascript",
+  ".tsx": "text/typescript",
+  ".toml": "text/plain",
+  ".ini": "text/plain",
+  ".cfg": "text/plain",
+  ".conf": "text/plain",
+  ".csv": "text/csv",
+  ".tsv": "text/tab-separated-values",
+  ".rst": "text/x-rst",
+  ".tex": "text/x-tex",
+  ".diff": "text/x-diff",
+  ".patch": "text/x-diff",
+  ".rb": "text/x-ruby",
+  ".go": "text/x-go",
+  ".rs": "text/x-rust",
+  ".java": "text/x-java",
+  ".kt": "text/x-kotlin",
+  ".swift": "text/x-swift",
+  ".c": "text/x-c",
+  ".h": "text/x-c",
+  ".cpp": "text/x-c++",
+  ".hpp": "text/x-c++",
+  ".r": "text/x-r",
+  ".ps1": "text/plain",
+  ".bat": "text/plain",
+};
+
+/**
+ * MIME type for a skill file. Falls back to the SDK's table, which returns
+ * application/octet-stream for anything it does not recognise.
  */
 function getMimeType(filePath: string): string {
   const ext = path.extname(filePath).toLowerCase();
-  const mimeTypes: Record<string, string> = {
-    ".md": "text/markdown",
-    ".ts": "text/typescript",
-    ".js": "text/javascript",
-    ".json": "application/json",
-    ".yaml": "text/yaml",
-    ".yml": "text/yaml",
-    ".txt": "text/plain",
-    ".sh": "text/x-shellscript",
-    ".py": "text/x-python",
-    ".css": "text/css",
-    ".html": "text/html",
-    ".xml": "application/xml",
-  };
-  return mimeTypes[ext] || "text/plain";
+  return EXTRA_TEXT_TYPES[ext] ?? sdkMimeType(filePath);
 }
 
 /**
@@ -246,13 +269,18 @@ function registerSkillTemplate(
         );
       }
 
-      const content = fs.readFileSync(fullPath, "utf-8");
+      // Text goes out as UTF-8 text, everything else as a base64 blob, so a
+      // host hashing what it receives gets the same bytes the entry digests.
+      const bytes = fs.readFileSync(fullPath);
+      const mimeType = getMimeType(fileRelPath);
       return {
         contents: [
           {
             uri: uriStr,
-            mimeType: getMimeType(fileRelPath),
-            text: content,
+            mimeType,
+            ...(isTextMimeType(mimeType)
+              ? { text: bytes.toString("utf-8") }
+              : { blob: bytes.toString("base64") }),
           },
         ],
       };

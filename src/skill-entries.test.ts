@@ -310,6 +310,33 @@ describe("resources/read stays within the manifest", () => {
     expect(ok.contents[0]).toMatchObject({ text: "a" });
   });
 
+  it("serves a binary file as a base64 blob whose bytes match the manifest", async () => {
+    // Bytes that are not valid UTF-8, so a text decode would change them.
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0xfe, 0x80, 0x00]);
+    const skill = bundledSkill("bin");
+    const skillDir = path.dirname(skill.path);
+    fs.writeFileSync(path.join(skillDir, "logo.png"), png);
+    fs.writeFileSync(path.join(skillDir, "font.ttf"), png);
+    const client = await connect(createTestSkillState([skill]));
+
+    const entry = (await listSkills(client)).skills[0];
+    const ref = (entry.resources as { uri: string; digest: string; size: number }[]).find((r) =>
+      r.uri.endsWith("/logo.png")
+    )!;
+    expect(ref.size).toBe(png.length);
+
+    for (const name of ["logo.png", "font.ttf"]) {
+      const read = await client.readResource({ uri: `skill://bin/${name}` });
+      const content = read.contents[0] as { blob?: string; text?: string; mimeType?: string };
+      expect(content.text).toBeUndefined();
+      const bytes = Buffer.from(content.blob!, "base64");
+      expect(bytes.equals(png)).toBe(true);
+      expect(sha256Digest(bytes)).toBe(ref.digest);
+    }
+    const listed = await client.listResources();
+    expect(listed.resources.find((r) => r.uri === "skill://bin/logo.png")!.mimeType).toBe("image/png");
+  });
+
   it("returns -32602 for a URI no skill serves and for malformed percent-encoding", async () => {
     const client = await connect(resourcefulState());
     await expect(
