@@ -1,12 +1,14 @@
 /**
  * MCP Resource registration for skill-based resources, aligned with SEP-2640
- * (Skills Extension).
+ * (Skills Extension). Also registers the extension's `skills/list` and
+ * `skills/get` methods (see skill-entries.ts).
  *
  * URI Scheme:
  *   skill://<skill-path>/SKILL.md   -> Each skill's SKILL.md (listed in resources/list)
  *   skill://<skill-path>/<file>     -> Individual files inside a skill (listed in
  *                                      resources/list at lower priority than SKILL.md)
- *   skill://index.json              -> SEP-2640 discovery index (application/json)
+ *   skill://index.json              -> Pre-v1 discovery index (application/json), kept
+ *                                      for clients that predate skills/list
  *
  * <skill-path> is computed by getSkillPath(): "<prefix>/<baseName>" for prefixed
  * skills (final segment always equals frontmatter `name`), or just "<baseName>"
@@ -15,8 +17,14 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { McpServer, ResourceTemplate } from "@modelcontextprotocol/server";
+import {
+  McpServer,
+  ResourceTemplate,
+  ProtocolError,
+  ProtocolErrorCode,
+} from "@modelcontextprotocol/server";
 import type { Resource, ReadResourceResult } from "@modelcontextprotocol/server";
+import { registerSkillMethods } from "./skill-entries.js";
 import {
   loadSkillContent,
   getResourceAnnotations,
@@ -60,6 +68,7 @@ export function registerSkillResources(
 ): void {
   registerSkillIndexResource(server, skillState);
   registerSkillTemplate(server, skillState);
+  registerSkillMethods(server, skillState);
 }
 
 /**
@@ -173,8 +182,13 @@ function registerSkillTemplate(
       const uriStr = resourceUri.toString();
       const parsed = parseSkillResourceUri(uriStr, skillState.skillMap);
 
+      // Unknown resources are -32602, the code SEP-2640 prescribes for
+      // resources/read of a skill file the server does not serve.
       if (!parsed) {
-        throw new Error(`Skill resource not found for URI: ${uriStr}`);
+        throw new ProtocolError(
+          ProtocolErrorCode.InvalidParams,
+          `Skill resource not found for URI: ${uriStr}`
+        );
       }
 
       const { skill, fileRelPath } = parsed;
@@ -193,30 +207,33 @@ function registerSkillTemplate(
           };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          throw new Error(`Failed to load skill "${skill.baseName}": ${message}`);
+          throw new ProtocolError(
+            ProtocolErrorCode.InternalError,
+            `Failed to load skill "${skill.baseName}": ${message}`
+          );
         }
       }
 
-      // Supporting file inside the skill directory.
+      // Supporting file inside the skill directory. Only files the skill's
+      // entry lists are served, so a read can never return content the
+      // manifest does not cover (hidden files, symlinks, node_modules).
       const skillDir = path.dirname(skill.path);
       const fullPath = path.resolve(skillDir, fileRelPath);
 
-      if (!isPathWithinBase(fullPath, skillDir)) {
-        throw new Error(`Path traversal blocked: ${fileRelPath}`);
+      if (
+        !isPathWithinBase(fullPath, skillDir) ||
+        !listSkillFiles(skillDir).includes(fileRelPath)
+      ) {
+        throw new ProtocolError(
+          ProtocolErrorCode.InvalidParams,
+          `Not a file of skill "${skill.baseName}": ${fileRelPath}`
+        );
       }
 
-      let stat: fs.Stats;
-      try {
-        stat = fs.statSync(fullPath);
-      } catch {
-        throw new Error(`File not found: ${fileRelPath}`);
-      }
-
-      if (stat.isSymbolicLink() || stat.isDirectory()) {
-        throw new Error(`Not a readable file: ${fileRelPath}`);
-      }
+      const stat = fs.statSync(fullPath);
       if (stat.size > MAX_FILE_SIZE) {
-        throw new Error(
+        throw new ProtocolError(
+          ProtocolErrorCode.InternalError,
           `File too large (${stat.size} bytes, max ${MAX_FILE_SIZE}): ${fileRelPath}`
         );
       }

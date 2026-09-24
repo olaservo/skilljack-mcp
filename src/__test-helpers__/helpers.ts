@@ -5,11 +5,12 @@ import { SkillState } from "../skill-tool.js";
  * Create a test SkillMetadata with sensible defaults.
  */
 export function createTestSkill(overrides: Partial<SkillMetadata> = {}): SkillMetadata {
-  return {
+  const skill: SkillMetadata = {
     name: "test__skill",
     baseName: "skill",
     description: "A test skill",
     path: "/fake/path/SKILL.md",
+    frontmatter: {},
     effectiveAssistantInvocable: true,
     effectiveUserInvocable: true,
     isAssistantOverridden: false,
@@ -17,6 +18,10 @@ export function createTestSkill(overrides: Partial<SkillMetadata> = {}): SkillMe
     source: DEFAULT_SKILL_SOURCE,
     ...overrides,
   };
+  if (!overrides.frontmatter) {
+    skill.frontmatter = { name: skill.baseName, description: skill.description };
+  }
+  return skill;
 }
 
 /**

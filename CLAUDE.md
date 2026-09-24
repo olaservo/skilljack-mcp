@@ -50,6 +50,7 @@ src/
 ├── skill-tool.ts          # MCP tools: load-skill, skill-resource
 ├── skill-prompts.ts       # MCP Prompts: /skill with auto-completion, per-skill prompts
 ├── skill-resources.ts     # MCP Resources: SEP-2640 skill:// URI scheme + skill://index.json
+├── skill-entries.ts       # SEP-2640 skills/list + skills/get (entries with per-file digests)
 ├── subscriptions.ts       # File watching, resource subscriptions
 ├── skill-config.ts        # Directory/override config (~/.skilljack/config.json)
 ├── skill-config-tool.ts   # MCP tools backing the config UI (skill-config-*)
@@ -112,6 +113,8 @@ Packaging: `manifest.json` + `.mcpbignore` define the `.mcpb` bundle (MCP Bundle
 | `buildSkillResourceUri()` | skill-discovery.ts | Build a `skill://<skill-path>/<file>` URI |
 | `parseSkillResourceUri()` | skill-discovery.ts | Resolve a `skill://` URI back to a skill + file relpath |
 | `buildSkillIndex()` | skill-discovery.ts | Build the JSON document served at `skill://index.json` |
+| `buildSkillEntry()` | skill-entries.ts | Build a skill's SEP-2640 entry (verbatim frontmatter + `{uri, digest, size}` manifest) |
+| `registerSkillMethods()` | skill-entries.ts | Register `skills/list` and `skills/get` over the live `skillState` |
 | `generateInstructions()` | skill-discovery.ts | Create XML skill list |
 | `getToolDescription()` | skill-tool.ts | Tool desc: usage text (+ skill list in tool-description mode) |
 | `getServerInstructions()` | skill-tool.ts | Server `instructions` for a catalog mode (undefined in tool-description mode) |
@@ -171,15 +174,22 @@ capabilities: {
 
 In static mode (`--static` or `SKILLJACK_STATIC=true`), `tools.listChanged` and `prompts.listChanged` are set to `false`. Resource subscriptions remain fully dynamic.
 
-## Resource URIs (SEP-2640)
+## Skills extension (SEP-2640)
 
-The resource layer follows [SEP-2640 (Skills Extension)](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640):
+The server declares `io.modelcontextprotocol/skills` and implements the two methods that declaration requires, using the wire schemas from `@olaservo/ext-skills`:
+
+| Method | Returns |
+|--------|---------|
+| `skills/list` | Paginated entries for every skill in `skillState`, read live on each request. |
+| `skills/get` | The entry for one skill by its `SKILL.md` URI, or `-32602` if none is served there. |
+
+An entry carries the skill's verbatim `frontmatter` and a complete `resources` manifest: `{uri, digest, size}` for `SKILL.md` and every file `listSkillFiles()` enumerates. That is the same set `resources/list` advertises, and `resources/read` refuses files outside it. Digests are SHA-256 over raw bytes, cached per file by mtime and size. `ttlMs`/`cacheScope` are emitted only on 2026-07-28+ connections, which this server does not yet serve (issue #104). `resources/directory/read` is not implemented and `directoryRead` is not declared.
 
 | URI | Returns |
 |-----|---------|
 | `skill://<skill-path>/SKILL.md` | The skill's SKILL.md (`text/markdown`). Listed. |
 | `skill://<skill-path>/<file-path>` | A supporting file inside the skill directory. Listed in `resources/list`, lower priority than `SKILL.md`. |
-| `skill://index.json` | SEP-2640 discovery index (`application/json`). Listed. |
+| `skill://index.json` | Pre-v1 discovery index (`application/json`), kept for clients that predate `skills/list`. Listed. |
 
 `<skill-path>` is `<prefix>/<baseName>` for prefixed skills (local: dir basename, GitHub: `owner-repo`) or just `<baseName>` for bundled. The final URI segment always equals the frontmatter `name` per SEP. Build/parse via `buildSkillResourceUri()` / `parseSkillResourceUri()` in `skill-discovery.ts`.
 
