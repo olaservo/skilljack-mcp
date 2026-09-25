@@ -15,11 +15,9 @@ CI (`.github/workflows/ci.yml`) runs `npm ci`, `npm run build`, and `npm test` o
 This package spans two independent bundles that share only the MCP wire format:
 
 - **Server half** (everything except `src/ui/**`) is on **MCP TypeScript SDK v2** — `@modelcontextprotocol/server`, `@modelcontextprotocol/server/stdio`, `@modelcontextprotocol/node` (+ `@modelcontextprotocol/client` in tests only). Typechecked by the root `tsconfig.json`, which **excludes `src/ui/**`**.
-- **Browser half** (`src/ui/mcp-app.ts`, `src/ui/skill-display.ts`) is on **`@modelcontextprotocol/ext-apps` + SDK v1**, because ext-apps (latest 1.7.5) is hard-bound to v1 and has no v2-compatible release. Vite bundles it into self-contained HTML that runs in an iframe. Typechecked by `tsconfig.ui.json` (run by `npm run build:ui`).
-- `@modelcontextprotocol/sdk` (v1) and `@modelcontextprotocol/ext-apps` are **devDependencies**: they are needed to *build* the browser bundle, never to *run* the server.
-- `src/ui-meta.ts` is a vendored, faithful port of the three `@modelcontextprotocol/ext-apps/server` helpers the server used (`registerAppTool`, `registerAppResource`, `getUiCapability`), retyped against v2. It must keep emitting **both** `_meta['ui/resourceUri']` and `_meta.ui.resourceUri` — hosts read either. Delete it when ext-apps ships a v2-compatible release.
-
-No v1 object ever flows into v2 code in-process, so the two halves can stay on different major versions.
+- **Browser half** (`src/ui/mcp-app.ts`, `src/ui/skill-display.ts`) imports only `@modelcontextprotocol/ext-apps`, on 2.0.0 since #109 (2026-09-24). Vite bundles it into self-contained HTML that runs in an iframe. Typechecked by `tsconfig.ui.json` (run by `npm run build:ui`).
+- `@modelcontextprotocol/ext-apps` is a **devDependency**: it is needed to *build* the browser bundle, never to *run* the server. `@modelcontextprotocol/sdk` (v1) is still listed as a devDependency but nothing imports it any more; it dates from ext-apps 1.x, which was bound to v1.
+- `src/ui-meta.ts` is a vendored port of the three `@modelcontextprotocol/ext-apps/server` helpers the server used (`registerAppTool`, `registerAppResource`, `getUiCapability`), retyped against v2 when ext-apps had no v2 release. It must keep emitting **both** `_meta['ui/resourceUri']` and `_meta.ui.resourceUri` — hosts read either. Pending: replace it with ext-apps 2's own helpers and drop the v1 devDependency (planned as its own change).
 
 ## Configuration
 
@@ -66,7 +64,7 @@ src/
 ├── http-transport.ts      # Stateless Streamable HTTP transport (buildCoreServer, startHttpServer)
 ├── ui-meta.ts             # Vendored MCP Apps _meta helpers (see "SDK split" above)
 ├── types/                 # Ambient type declarations (e.g. yauzl-promise)
-└── ui/                    # MCP Apps UI (mcp-app.ts, skill-display.ts) built by Vite — stays on ext-apps + SDK v1
+└── ui/                    # MCP Apps UI (mcp-app.ts, skill-display.ts) built by Vite on ext-apps 2
 ```
 
 Packaging: `manifest.json` + `.mcpbignore` define the `.mcpb` bundle (MCP Bundle) for distribution.

@@ -19,6 +19,7 @@ An MCP server that jacks [Agent Skills](https://agentskills.io) directly into yo
 - **`load-skill` Tool** - Load full skill content on demand (progressive disclosure)
 - **MCP Prompts** - Load skills via `/skill` prompt with auto-completion or per-skill prompts
 - **MCP Resources** - Access skills via `skill://` URIs aligned with [SEP-2640](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640)
+- **Skills extension (SEP-2640)** - Declares `io.modelcontextprotocol/skills` and serves `skills/list` / `skills/get` entries with verbatim frontmatter and per-file SHA-256 digests, so a skills-aware host can verify every file it reads
 - **Resource Subscriptions** - Real-time file watching with `notifications/resources/updated`
 - **Configuration UI** - Manage skill directories through an interactive UI in supported clients
 
@@ -341,7 +342,22 @@ Skills are also accessible via MCP [Resources](https://modelcontextprotocol.io/s
 |-----|---------|
 | `skill://<skill-path>/SKILL.md` | The skill's `SKILL.md` (`text/markdown`). Listed in `resources/list`. |
 | `skill://<skill-path>/<file-path>` | A supporting file inside the skill directory. Listed in `resources/list` at lower priority than `SKILL.md`. |
-| `skill://index.json` | SEP-2640 discovery index (`application/json`). Listed in `resources/list`. |
+| `skill://index.json` | Pre-v1 discovery index (`application/json`), kept for clients written against the draft SEP before `skills/list` replaced it. Listed in `resources/list`. |
+
+A supporting file is served as `text` when its MIME type is a text type and its bytes are valid UTF-8, and as a base64 `blob` otherwise (fonts, PDFs, archives, and text-typed files in another encoding), so what a host receives always hashes to the entry's digest. Only files the skill's entry lists are served; hidden files, symlinks and `node_modules` return `-32602`, as does any URI no skill serves.
+
+### Skills extension (SEP-2640)
+
+The server declares `io.modelcontextprotocol/skills` in its capabilities and implements the two methods that declaration requires:
+
+| Method | Returns |
+|--------|---------|
+| `skills/list` | Paginated entries for every served skill, sorted by URI. Each page resumes after the last URI returned, so a refresh between pages never repeats an entry or shifts the ones that follow. |
+| `skills/get` | The entry for one skill by its `SKILL.md` URI, or `-32602` if no skill is served there. |
+
+An entry is `{ uri, frontmatter, resources }`: the `SKILL.md` URI, the parsed frontmatter with every field the author wrote, and a complete manifest of `{ uri, digest, size }` for `SKILL.md` and every supporting file, with `sha256:` digests over raw bytes. A host that holds the entry can verify each file it reads and bind user approval to that exact content. `ttlMs` and `cacheScope` appear only on 2026-07-28+ connections, which this server does not serve yet ([#104](https://github.com/olaservo/skilljack-mcp/issues/104)). `resources/directory/read` is not implemented and `directoryRead` is not declared.
+
+A client that declares the extension in its own capabilities is expected to load skills this way, so by default it is not offered the `load-skill` / `skill-resource` tools; see `--tools` under [Usage](#skill-tools-and-skills-aware-hosts).
 
 `<skill-path>` is `<prefix>/<baseName>` for prefixed skills (the prefix segments come from the skill's source — e.g., a local directory basename or `owner-repo` for GitHub-sourced skills) or just `<baseName>` for bundled skills. The final `<skill-path>` segment always matches the `name` field in the skill's frontmatter, per SEP.
 
@@ -472,6 +488,15 @@ Note: Resources (`skill://` URIs) always include all skills regardless of visibi
 ```bash
 npm run build
 npm run inspector -- /path/to/skills
+```
+
+The Inspector CLI (2.6.0+) also runs the SEP-2640 checks over the served skills, verifying each file's digest and size against its entry, up to its catalog budget (it exits 8 when a large directory is not fully read). Give it the server through a config file so the server's own flags are not parsed as Inspector options, and point it at a real skills directory with binary supporting files:
+
+```bash
+cat > inspector.json <<'EOF'
+{ "mcpServers": { "skilljack": { "command": "node", "args": ["dist/index.js", "--static", "/path/to/skills"] } } }
+EOF
+npx @modelcontextprotocol/inspector --cli --config inspector.json --server skilljack --method skills/list --verify
 ```
 
 ### Automated Evals (Development Only)
