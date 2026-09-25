@@ -64,7 +64,7 @@ src/
 ├── http-transport.ts      # Stateless Streamable HTTP transport (buildCoreServer, startHttpServer)
 ├── ui-meta.ts             # Vendored MCP Apps _meta helpers (see "SDK split" above)
 ├── types/                 # Ambient type declarations (e.g. yauzl-promise)
-└── ui/                    # MCP Apps UI (mcp-app.ts, skill-display.ts) built by Vite — stays on ext-apps + SDK v1
+└── ui/                    # MCP Apps UI (mcp-app.ts, skill-display.ts) built by Vite on ext-apps 2
 ```
 
 Packaging: `manifest.json` + `.mcpbignore` define the `.mcpb` bundle (MCP Bundle) for distribution.
