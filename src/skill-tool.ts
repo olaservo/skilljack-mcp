@@ -9,11 +9,19 @@
  */
 
 import * as fs from "node:fs";
+import { isUtf8 } from "node:buffer";
 import * as path from "node:path";
 import { McpServer, RegisteredTool, CallToolResult } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { SKILLS_EXTENSION_ID } from "@olaservo/ext-skills/server";
-import { SkillMetadata, loadSkillContent, generateInstructions, getModelInvocableSkills } from "./skill-discovery.js";
+import { getMimeType as sdkMimeType, isTextMimeType } from "@olaservo/ext-skills";
+import {
+  SkillMetadata,
+  loadSkillContent,
+  generateInstructions,
+  getModelInvocableSkills,
+  buildSkillResourceUri,
+} from "./skill-discovery.js";
 
 /**
  * Shared state for dynamic skill management.
@@ -366,6 +374,67 @@ export function listSkillFiles(skillDir: string, subPath: string = "", depth: nu
   return files;
 }
 
+/** Bytes read to decide whether a file of unknown type is text. */
+const SNIFF_BYTES = 8192;
+
+/**
+ * Whether the start of a file is valid UTF-8. A multibyte character cut at
+ * the sniff boundary is tolerated by retrying without the last few bytes.
+ */
+function sniffIsUtf8(fullPath: string): boolean {
+  let fd: number;
+  try {
+    fd = fs.openSync(fullPath, "r");
+  } catch {
+    return false;
+  }
+  try {
+    const buf = Buffer.alloc(SNIFF_BYTES);
+    const n = fs.readSync(fd, buf, 0, SNIFF_BYTES, 0);
+    const head = buf.subarray(0, n);
+    if (isUtf8(head)) return true;
+    if (n < SNIFF_BYTES) return false;
+    for (let cut = 1; cut <= 3; cut++) {
+      if (isUtf8(head.subarray(0, n - cut))) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * MIME type for a skill file: the SDK's table for known extensions, and for
+ * anything else text/plain when the bytes look like UTF-8, otherwise
+ * application/octet-stream. Used by resources/list, resources/read and the
+ * skill-resource tool alike.
+ */
+export function skillFileMimeType(fullPath: string, fileRelPath: string): string {
+  const fromTable = sdkMimeType(fileRelPath);
+  if (fromTable !== "application/octet-stream") return fromTable;
+  return sniffIsUtf8(fullPath) ? "text/plain" : fromTable;
+}
+
+/** A skill file's bytes and label. `text` is set only for valid UTF-8 under a text MIME type. */
+export interface SkillFileContent {
+  mimeType: string;
+  bytes: Buffer;
+  text?: string;
+}
+
+/**
+ * Read a skill file the way resources/read serves it: text only when the
+ * MIME type is textual and the bytes are valid UTF-8, otherwise raw bytes.
+ */
+export function readSkillFile(fullPath: string, fileRelPath: string): SkillFileContent {
+  const bytes = fs.readFileSync(fullPath);
+  const mimeType = skillFileMimeType(fullPath, fileRelPath);
+  const asText = isTextMimeType(mimeType) && isUtf8(bytes);
+  return asText ? { mimeType, bytes, text: bytes.toString("utf-8") } : { mimeType, bytes };
+}
+
 /**
  * Whether `rel` names a file `listSkillFiles(skillDir)` would enumerate,
  * answered with per-segment checks and one lstat per path component instead
@@ -423,7 +492,8 @@ function registerSkillResourceTool(
       description:
         "Read files referenced by skill instructions (scripts, snippets, templates). " +
         "Use when skill instructions mention specific files to read or copy. " +
-        "Pass a directory path (e.g., 'templates') to read all files in that directory at once.",
+        "Pass a directory path (e.g., 'templates') to read all files in that directory at once. " +
+        "Text files are returned as text; a binary file is returned as an embedded base64 resource.",
       inputSchema: SkillResourceSchema,
       annotations: {
         readOnlyHint: true,
@@ -547,10 +617,13 @@ function registerSkillResourceTool(
                 text: `--- ${file} ---\n[File too large: ${(fileStat.size / 1024 / 1024).toFixed(2)}MB]`,
               });
             } else {
-              const fileContent = fs.readFileSync(filePath, "utf-8");
+              const content = readSkillFile(filePath, file);
               contents.push({
                 type: "text",
-                text: `--- ${file} ---\n${fileContent}`,
+                text:
+                  content.text !== undefined
+                    ? `--- ${file} ---\n${content.text}`
+                    : `--- ${file} ---\n[Binary file (${content.mimeType}, ${content.bytes.length} bytes). Read it on its own to get the bytes.]`,
               });
             }
           } catch (error) {
@@ -592,14 +665,23 @@ function registerSkillResourceTool(
         };
       }
 
-      // Read and return the file content
+      // Read and return the file content. Text goes out as text; anything
+      // else as an embedded resource so the bytes survive untouched.
       try {
-        const content = fs.readFileSync(fullPath, "utf-8");
+        const rel = path.relative(skillDir, fullPath).split(path.sep).join("/");
+        const file = readSkillFile(fullPath, rel);
+        if (file.text !== undefined) {
+          return { content: [{ type: "text", text: file.text }] };
+        }
         return {
           content: [
             {
-              type: "text",
-              text: content,
+              type: "resource",
+              resource: {
+                uri: buildSkillResourceUri(skill, rel),
+                mimeType: file.mimeType,
+                blob: file.bytes.toString("base64"),
+              },
             },
           ],
         };

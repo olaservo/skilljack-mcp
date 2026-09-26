@@ -290,6 +290,8 @@ This follows the Agent Skills spec's progressive disclosure pattern - resources 
 ```
 Returns all files in the directory as multiple content items.
 
+**Binary files:** a file whose bytes are not valid UTF-8 under a text MIME type (an image, a font, an archive, a Latin-1 CSV) is returned as an embedded resource: `{ type: "resource", resource: { uri: "skill://...", mimeType, blob } }` with the bytes base64-encoded. In a directory read such a file is listed with its MIME type and size instead of its bytes.
+
 **List available files** (pass empty path):
 ```json
 {
