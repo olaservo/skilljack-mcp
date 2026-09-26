@@ -10,14 +10,13 @@
 
 CI (`.github/workflows/ci.yml`) runs `npm ci`, `npm run build`, and `npm test` on Node 22 for every push to `main` and every PR. Node 22+ is required; Node 20 reached end of life in April 2026.
 
-## SDK split: server on v2, UI on v1
+## Two bundles: server and UI
 
 This package spans two independent bundles that share only the MCP wire format:
 
-- **Server half** (everything except `src/ui/**`) is on **MCP TypeScript SDK v2** — `@modelcontextprotocol/server`, `@modelcontextprotocol/server/stdio`, `@modelcontextprotocol/node` (+ `@modelcontextprotocol/client` in tests only). Typechecked by the root `tsconfig.json`, which **excludes `src/ui/**`**.
+- **Server half** (everything except `src/ui/**`) is on **MCP TypeScript SDK v2** — `@modelcontextprotocol/server`, `@modelcontextprotocol/server/stdio`, `@modelcontextprotocol/node` (+ `@modelcontextprotocol/client` in tests only) — and registers its MCP Apps tools and resources through `registerAppTool` / `registerAppResource` from `@modelcontextprotocol/ext-apps/server`. Typechecked by the root `tsconfig.json`, which **excludes `src/ui/**`**.
 - **Browser half** (`src/ui/mcp-app.ts`, `src/ui/skill-display.ts`) imports only `@modelcontextprotocol/ext-apps`, on 2.0.0 since #109 (2026-09-24). Vite bundles it into self-contained HTML that runs in an iframe. Typechecked by `tsconfig.ui.json` (run by `npm run build:ui`).
-- `@modelcontextprotocol/ext-apps` is a **devDependency**: it is needed to *build* the browser bundle, never to *run* the server. `@modelcontextprotocol/sdk` (v1) is still listed as a devDependency but nothing imports it any more; it dates from ext-apps 1.x, which was bound to v1.
-- `src/ui-meta.ts` is a vendored port of the three `@modelcontextprotocol/ext-apps/server` helpers the server used (`registerAppTool`, `registerAppResource`, `getUiCapability`), retyped against v2 when ext-apps had no v2 release. It must keep emitting **both** `_meta['ui/resourceUri']` and `_meta.ui.resourceUri` — hosts read either. Pending: replace it with ext-apps 2's own helpers and drop the v1 devDependency (planned as its own change).
+- `@modelcontextprotocol/ext-apps` is a runtime **dependency** since the server imports its `/server` helpers (a self-contained module with no imports of its own); its peer dependencies `@modelcontextprotocol/{core,client}` and `zod` install alongside it. Hosts locate a tool's UI by reading `_meta['ui/resourceUri']` and/or `_meta.ui.resourceUri`; `registerAppTool` emits both, and `src/mcp-apps-meta.test.ts` checks that on the wire. The vendored `src/ui-meta.ts` port that bridged the gap while ext-apps had no v2 release is gone, as is the `@modelcontextprotocol/sdk` v1 devDependency it dated from (v1 still appears in the lock file as a peer of `@anthropic-ai/claude-agent-sdk`, used only by the evals).
 
 ## Configuration
 
@@ -62,9 +61,8 @@ src/
 ├── well-known-sync.ts     # Fetch + verify (SHA-256) + safely extract publisher artifacts
 ├── well-known-polling.ts  # Periodic well-known index re-fetch (ETag/If-None-Match)
 ├── http-transport.ts      # Stateless Streamable HTTP transport (buildCoreServer, startHttpServer)
-├── ui-meta.ts             # Vendored MCP Apps _meta helpers (see "SDK split" above)
 ├── types/                 # Ambient type declarations (e.g. yauzl-promise)
-└── ui/                    # MCP Apps UI (mcp-app.ts, skill-display.ts) built by Vite on ext-apps 2
+└── ui/                    # MCP Apps UI (mcp-app.ts, skill-display.ts) built by Vite on ext-apps 2 (see "Two bundles" above)
 ```
 
 Packaging: `manifest.json` + `.mcpbignore` define the `.mcpb` bundle (MCP Bundle) for distribution.
