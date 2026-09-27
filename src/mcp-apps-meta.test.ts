@@ -4,7 +4,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Client } from "@modelcontextprotocol/client";
 import { McpServer, InMemoryTransport } from "@modelcontextprotocol/server";
-import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
 import { registerSkillConfigTool } from "./skill-config-tool.js";
 import { registerSkillDisplayTool } from "./skill-display-tool.js";
 import { createTestSkillState } from "./__test-helpers__/helpers.js";
@@ -73,7 +72,8 @@ describe("MCP Apps metadata on the wire", () => {
       ["ui://skill-config/mcp-app.html", "ui://skill-display/skill-display.html"].sort()
     );
     for (const resource of uiResources) {
-      expect(resource.mimeType, resource.uri).toBe(RESOURCE_MIME_TYPE);
+      // The literal, not ext-apps' constant: hosts match on this exact string.
+      expect(resource.mimeType, resource.uri).toBe("text/html;profile=mcp-app");
     }
   });
 });

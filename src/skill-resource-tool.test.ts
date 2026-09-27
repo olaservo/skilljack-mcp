@@ -34,6 +34,10 @@ function makeSkill() {
   fs.writeFileSync(path.join(skillDir, "assets", "logo.png"), PNG);
   fs.writeFileSync(path.join(skillDir, "assets", "data.csv"), LATIN1_CSV);
   fs.writeFileSync(path.join(skillDir, "assets", "notes.txt"), "plain text\n");
+  fs.writeFileSync(path.join(skillDir, "assets", "latin1.txt"), LATIN1_CSV);
+  fs.mkdirSync(path.join(skillDir, ".secrets"));
+  fs.writeFileSync(path.join(skillDir, ".secrets", "key.p12"), PNG);
+  fs.writeFileSync(path.join(skillDir, ".env"), "TOKEN=x\n");
   fs.writeFileSync(path.join(skillDir, "Makefile"), "all:\n\techo ok\n");
   return createTestSkill({
     name: "bin",
@@ -86,6 +90,17 @@ describe("skill-resource tool file contents", () => {
     expect(await read(client, "Makefile")).toEqual([{ type: "text", text: "all:\n\techo ok\n" }]);
   });
 
+  it("refuses files resources/read would refuse: hidden files and SKILL.md", async () => {
+    const client = await connect();
+    for (const file of [".env", ".secrets/key.p12", "SKILL.md"]) {
+      const result = await client.callTool({ name: "skill-resource", arguments: { skill: "bin", path: file } });
+      expect(result.isError, file).toBe(true);
+      const [content] = result.content as Content[];
+      expect(content.type, file).toBe("text");
+      if (content.type === "text") expect(content.text, file).not.toContain("TOKEN");
+    }
+  });
+
   it("describes binary files in a directory read instead of dumping their bytes", async () => {
     const client = await connect();
     const contents = await read(client, "assets");
@@ -95,6 +110,7 @@ describe("skill-resource tool file contents", () => {
         "--- assets/notes.txt ---\nplain text\n",
         `--- assets/logo.png ---\n[Binary file (image/png, ${PNG.length} bytes). Read it on its own to get the bytes.]`,
         `--- assets/data.csv ---\n[Binary file (application/octet-stream, ${LATIN1_CSV.length} bytes). Read it on its own to get the bytes.]`,
+        `--- assets/latin1.txt ---\n[Not valid UTF-8 (text/plain, ${LATIN1_CSV.length} bytes). Read it on its own to get the bytes.]`,
       ].sort()
     );
   });
