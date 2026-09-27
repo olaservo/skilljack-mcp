@@ -15,7 +15,7 @@ import {
   registerAppTool,
   registerAppResource,
   RESOURCE_MIME_TYPE,
-} from "./ui-meta.js";
+} from "@modelcontextprotocol/ext-apps/server";
 import { z } from "zod";
 import {
   getAllDirectoriesWithSources,

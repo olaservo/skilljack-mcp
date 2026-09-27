@@ -59,6 +59,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^2.0.0",
     "@modelcontextprotocol/node": "^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "@olaservo/ext-skills": "^0.16.0",
@@ -72,8 +73,6 @@
   "devDependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.201",
     "@modelcontextprotocol/client": "^2.0.0",
-    "@modelcontextprotocol/ext-apps": "^2.0.0",
-    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/node": "^26.1.0",
     "@types/tar": "^7.0.87",
     "@vitest/coverage-v8": "^5.0.0",
