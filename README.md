@@ -7,7 +7,7 @@ An MCP server that jacks [Agent Skills](https://agentskills.io) directly into yo
 ## Installation
 
 ```bash
-npm install @skilljack/mcp
+npm install -g @skilljack/mcp
 ```
 
 Or run directly with npx:
@@ -23,6 +23,7 @@ git clone https://github.com/olaservo/skilljack-mcp.git
 cd skilljack-mcp
 npm install
 npm run build
+node dist/index.js /path/to/skills
 ```
 
 ## Usage
@@ -56,7 +57,7 @@ skilljack-mcp --http=3000 /path/to/skills
 # or: SKILLJACK_HTTP_PORT=3000 skilljack-mcp /path/to/skills
 ```
 
-**Transports:** stdio (default) or stateless HTTP (`--http[=port]`, default `3000`, or `SKILLJACK_HTTP_PORT`). HTTP serves the core skill surface (`load-skill`, `skill-resource`, `skill://` resources, `/skill` prompts) at `POST /mcp`. Discovery-on-change works the same as stdio — file watchers and remote-source polling keep the skill state fresh, and every request (including each new client's `initialize`) reads it. Because the transport is stateless it does not *push* `listChanged`/`resources/updated` notifications: already-connected clients see changes on their next request or reconnect. The MCP-Apps configuration UI is stdio-only.
+**Transports:** stdio (default) or stateless HTTP (`--http[=port]`, default `3000`, or `SKILLJACK_HTTP_PORT`). HTTP serves the core skill surface (`load-skill`, `skill-resource`, `skill://` resources, `skills/list` / `skills/get`, and the `/skill` and per-skill prompts) at `POST /mcp`. Use the `--http=<port>` form: `--http 3000` treats `3000` as a skill directory. The HTTP server listens on all interfaces and has no authentication. Discovery-on-change works the same as stdio — file watchers and remote-source polling keep the skill state fresh, and every request (including each new client's `initialize`) reads it. Because the transport is stateless it does not *push* `listChanged`/`resources/updated` notifications: already-connected clients see changes on their next request or reconnect. The MCP-Apps configuration UI is stdio-only.
 
 **Skills extension (SEP-2640):** the server declares `io.modelcontextprotocol/skills` and implements `skills/list` and `skills/get`. Each entry carries the skill's verbatim frontmatter and a `{uri, digest, size}` manifest of `SKILL.md` and every supporting file, so a host can verify what it reads. Files are served one at a time via `resources/read` under `skill://<skill-path>/<file>`. `skill://index.json` is still served for clients written against the pre-v1 index shape.
 
@@ -66,7 +67,7 @@ skilljack-mcp --http=3000 /path/to/skills
 
 ## Configuration and Skills Display UI
 
-This server comes along with a [MCP Apps](https://blog.modelcontextprotocol.io/posts/2026-01-26-mcp-apps/)-based UI for clients that support it.  Instead of fiddling with config files or environment variables, you can just configure your skills locations and skill visiblity directly in your chat window.
+This server comes along with a [MCP Apps](https://blog.modelcontextprotocol.io/posts/2026-01-26-mcp-apps/)-based UI for clients that support it.  Instead of fiddling with config files or environment variables, you can just configure your skills locations and skill visiblity directly in your chat window. Locations set in the UI are saved to `~/.skilljack/config.json` and take effect only when no directories are given on the command line or in `SKILLS_DIR`. The UI is not available with `--static` or `--http`.
 
 (Screenshots below are from Claude Desktop in dark mode.)
 
@@ -80,7 +81,7 @@ For complete documentation, just ask your assistant:
 
 > "how do I use skilljack?" or "how does skilljack work behind the scenes?"
 
-This loads the [full reference](https://github.com/olaservo/skilljack-mcp/blob/main/skills/skilljack-docs/SKILL.md) including tools, prompts, resources, configuration options, and architecture details.
+This loads the [full reference](https://github.com/olaservo/skilljack-mcp/blob/main/skills/skilljack-docs/SKILL.md) including tools, prompts, resources, configuration options and environment variables, and architecture details.
 
 ## Related
 

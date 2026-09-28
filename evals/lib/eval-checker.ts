@@ -19,7 +19,7 @@ function isSkillTool(toolName: string, mode: EvalMode): boolean {
     // Combined mode: either local Skill OR MCP skill tool
     return toolName === "Skill" || (toolName.includes('skill') && !toolName.includes('skill-resource'));
   } else {
-    // MCP mode uses mcp__skilljack__skill
+    // MCP mode uses mcp__skilljack__load-skill
     return toolName.includes('skill') && !toolName.includes('skill-resource');
   }
 }

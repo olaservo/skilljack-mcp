@@ -29,6 +29,12 @@
     { "name": "skill-config", "description": "View and manage skill directory and source configuration" },
     { "name": "skill-display", "description": "Open the skills management UI" }
   ],
+  "prompts": [
+    { "name": "skill", "description": "Load a skill by name with auto-completion", "arguments": ["name"], "text": "Load the skill named ${arguments.name}." },
+    { "name": "skills", "description": "Open the skills list UI", "text": "Please open the skills display UI using the skill-display tool so I can view and manage my skills." },
+    { "name": "skill-config", "description": "Open the skills configuration UI", "text": "Please open the skills configuration UI using the skill-config tool so I can manage my skill directories." }
+  ],
+  "prompts_generated": true,
   "compatibility": {
     "platforms": ["darwin", "win32", "linux"],
     "runtimes": {
@@ -39,7 +45,7 @@
     "skills_path": {
       "type": "directory",
       "title": "Skills Directory",
-      "description": "Path to the directory containing your agent skills",
+      "description": "Path to the directory containing your agent skills. Because this directory is always passed to the server, directories added in the configuration UI are saved but not used.",
       "required": true
     }
   }

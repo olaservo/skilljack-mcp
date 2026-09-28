@@ -2,13 +2,13 @@
 
 ## Commands
 
-- `npm run build` - Compile TypeScript to dist/ (Vite UI build + `tsc`)
+- `npm run build` - Compile TypeScript to dist/ (two Vite UI builds, `mcp-app` and `skill-display`, then `tsc`)
 - `npm run dev` - Watch mode (tsx)
 - `npm test` - Run the vitest suite
 - `npm run typecheck` - Typecheck both halves (`tsc --noEmit` for the server, `tsconfig.ui.json` for `src/ui`)
 - `npm run inspector` - Test with MCP Inspector
 
-CI (`.github/workflows/ci.yml`) runs `npm ci`, `npm run build`, and `npm test` on Node 22 for every push to `main` and every PR. Node 22+ is required; Node 20 reached end of life in April 2026.
+CI (`.github/workflows/ci.yml`) runs `npm ci`, `npm run build`, and `npm test` on Node 22 for every push to `main` and every PR against `main`. Node 22+ is required; Node 20 reached end of life in April 2026.
 
 ## Two bundles: server and UI
 
@@ -24,6 +24,10 @@ This package spans two independent bundles that share only the MCP wire format:
 - `SKILLS_DIR` - Comma-separated list of skill directories
 - `SKILLJACK_STATIC` - Set to `true`, `1`, or `yes` to enable static mode
 - `MAX_FILE_SIZE_MB` - Maximum file size for skill resources (default: 1MB)
+- `GITHUB_ALLOWED_ORGS` / `GITHUB_ALLOWED_USERS` - Comma-separated GitHub owners permitted as sources. Default-deny. Override the config file.
+- `GITHUB_TOKEN` - Token for private repos
+- `GITHUB_POLL_INTERVAL_MS` - GitHub poll cadence (default 300000, `0` disables)
+- `SKILLJACK_CACHE_DIR` - Cache root (default `~/.skilljack/github-cache`; well-known sources use `<dir>/well-known`)
 - `WELL_KNOWN_ALLOWED_ORIGINS` - Comma-separated origins (e.g. `https://example.com`) permitted as well-known publishers. Default-deny.
 - `WELL_KNOWN_POLL_INTERVAL_MS` - Well-known poll cadence (default 300000, `0` disables)
 - `WELL_KNOWN_MAX_ARTIFACT_MB` - Per-artifact byte cap (default 10)
@@ -37,7 +41,7 @@ This package spans two independent bundles that share only the MCP wire format:
 - Positional args: Skill directories, GitHub URLs, or well-known publisher URLs (e.g. `https://example.com/.well-known/agent-skills/`)
 - `--static`: Enable static mode (freeze skills at startup, no file watching)
 - `--http` / `--http=<port>`: Serve over stateless Streamable HTTP at `POST /mcp` instead of stdio (single token so it isn't parsed as a skill dir)
-- `--tools=<auto|always|never>`: Whether the `load-skill` and `skill-resource` tools are offered. `auto` (default) disables both after `initialize` when the client's capabilities carry `extensions["io.modelcontextprotocol/skills"]`, since such a host loads skills itself via `skills/list` / `skills/get` / `resources/read`. On stateless HTTP `auto` cannot see the handshake and behaves as `always`; with `--catalog=tool-description` it is ignored because the catalog lives in the tool description. The instructions catalog wording follows the mode. Env: `SKILLJACK_TOOLS`. See `getToolsMode()` in index.ts / `installToolsMode()` in skill-tool.ts.
+- `--tools=<auto|always|never>`: Whether the `load-skill` and `skill-resource` tools are offered. `auto` (default) disables both after `initialize` when the client's capabilities carry `extensions["io.modelcontextprotocol/skills"]`, since such a host loads skills itself via `skills/list` / `skills/get` / `resources/read`. On stateless HTTP `auto` cannot see the handshake and behaves as `always`; with `--catalog=tool-description` `auto` is ignored because the catalog lives in the tool description, and `never` leaves the client with no catalog. The instructions catalog wording follows the mode. Env: `SKILLJACK_TOOLS`. See `getToolsMode()` in index.ts / `installToolsMode()` in skill-tool.ts.
 - `--catalog=<instructions|tool-description>`: Which single channel carries the `<available_skills>` catalog (never both). `instructions` (default): server `instructions` — survives tool search, but frozen at startup on stdio since the SDK can't update instructions. `tool-description` (legacy, **not recommended** — see Conventions): the `load-skill` tool description — dynamic via `tools/listChanged`, but deferred out of context by tool search, and each refresh invalidates the whole prompt cache. Kept as an escape hatch and as the evals' control condition. Env: `SKILLJACK_CATALOG`. See `getCatalogMode()` in index.ts / `CatalogMode` in skill-tool.ts.
 
 ## Project Structure
@@ -47,7 +51,7 @@ src/
 ├── index.ts               # Entry point, server setup, file watching, stdio transport
 ├── skill-discovery.ts     # YAML frontmatter parsing, XML generation
 ├── skill-tool.ts          # MCP tools: load-skill, skill-resource
-├── skill-prompts.ts       # MCP Prompts: /skill with auto-completion, per-skill prompts
+├── skill-prompts.ts       # MCP Prompts: /skill with auto-completion, per-skill prompts, /skills and /skill-config (stdio UI only)
 ├── skill-resources.ts     # MCP Resources: SEP-2640 skill:// URI scheme + skill://index.json
 ├── skill-entries.ts       # SEP-2640 skills/list + skills/get (entries with per-file digests)
 ├── subscriptions.ts       # File watching, resource subscriptions
@@ -79,13 +83,13 @@ Packaging: `manifest.json` + `.mcpbignore` define the `.mcpb` bundle (MCP Bundle
 **SkillMetadata** - Parsed skill info:
 - `name` (qualified, e.g., `my-project__commit`), `baseName` (original from frontmatter), `description`, `path` (to SKILL.md)
 
-**RegisteredTool** - SDK type for dynamic tool updates:
-- Returned by `registerSkillTool()`
-- Has `update({ description })` method for refreshing tool description
+**SkillTools** - Returned by `registerSkillTool()`:
+- `loadSkill`, `skillResource`: `RegisteredTool`s. `loadSkill.update({ description })` refreshes the tool description.
 
 **PromptRegistry** - Tracks registered prompts for updates:
 - `skillPrompt: RegisteredPrompt` - The `/skill` prompt with auto-completion
 - `perSkillPrompts: Map<string, RegisteredPrompt>` - Per-skill prompts (e.g., `/my-project__mcp-server-ts`)
+- `disabledPrompts: Map<string, RegisteredPrompt>` - Per-skill prompts disabled on refresh, kept so they can be re-enabled
 
 ## Architecture
 
@@ -95,13 +99,13 @@ Packaging: `manifest.json` + `.mcpbignore` define the `.mcpb` bundle (MCP Bundle
 4. **Catalog delivery**: `<available_skills>` catalog in server `instructions` (default; sent at `initialize`, frozen until restart on stdio) or in the `load-skill` tool description (`--catalog=tool-description`; refreshable via `tools/listChanged` but legacy/not recommended) — exactly one channel, never both
 5. **Prompts**: `/skill` prompt with auto-completion + per-skill prompts, refreshable via `prompts/listChanged`
 6. **Progressive disclosure**: Full SKILL.md loaded on demand via `load-skill` tool or prompts
-7. **MCP SDK patterns**: Uses `McpServer`, `ResourceTemplate`, `completable()`, Zod schemas — all from `@modelcontextprotocol/server` (SDK v2). Schemas passed to `registerTool`/`registerPrompt` must be Standard Schema objects (`z.object({ … })`), not raw shapes; `RegisteredTool.update()` / `RegisteredPrompt.update()` never auto-wrap.
+7. **MCP SDK patterns**: Uses `McpServer`, `ResourceTemplate` and `completable()` from `@modelcontextprotocol/server` (SDK v2), with Zod schemas from `zod`. Schemas passed to `registerTool`/`registerPrompt` must be Standard Schema objects (`z.object({ … })`), not raw shapes; `RegisteredTool.update()` / `RegisteredPrompt.update()` never auto-wrap.
 
 ## Key Functions
 
 | Function | File | Purpose |
 |----------|------|---------|
-| `getStaticMode()` | index.ts | Check if static mode is enabled (CLI/env) |
+| `getStaticMode()` | index.ts | Check if static mode is enabled (CLI > env > config file) |
 | `getCatalogMode()` | index.ts | Resolve the catalog channel (`--catalog=` / `SKILLJACK_CATALOG`, default `instructions`) |
 | `getToolsMode()` | index.ts | Resolve the tools mode (`--tools=` / `SKILLJACK_TOOLS`, default `auto`) |
 | `installToolsMode()` | skill-tool.ts | Disable the skill tools now (`never`) or after `initialize` when the client declares the skills extension (`auto`) |
@@ -120,6 +124,7 @@ Packaging: `manifest.json` + `.mcpbignore` define the `.mcpb` bundle (MCP Bundle
 | `getServerInstructions()` | skill-tool.ts | Server `instructions` for a catalog mode (undefined in tool-description mode) |
 | `getCatalogInstructions()` | skill-tool.ts | Usage preamble + skill list for instructions mode |
 | `registerSkillPrompts()` | skill-prompts.ts | Register /skill + per-skill prompts |
+| `registerUiPrompts()` | skill-prompts.ts | Register /skills and /skill-config, only where the UI tools are registered |
 | `refreshPrompts()` | skill-prompts.ts | Update prompts when skills change |
 | `getPromptDescription()` | skill-prompts.ts | Usage text + skill list for prompt desc |
 | `refreshSubscriptions()` | subscriptions.ts | Update watchers when skills change |
@@ -153,6 +158,7 @@ WELL_KNOWN_ALLOWED_ORIGINS=https://example.com \
 | To add... | Modify... |
 |-----------|-----------|
 | New tool | `skill-tool.ts` - use `server.registerTool()` |
+| New UI (MCP Apps) tool | `skill-config-tool.ts` / `skill-display-tool.ts` - use `registerAppTool()` from `@modelcontextprotocol/ext-apps/server` |
 | New prompt | `skill-prompts.ts` - use `server.registerPrompt()` |
 | New resource | `skill-resources.ts` - use `server.registerResource()` |
 | Skill discovery logic | `skill-discovery.ts` |
@@ -163,7 +169,7 @@ WELL_KNOWN_ALLOWED_ORIGINS=https://example.com \
 
 ```typescript
 capabilities: {
-  tools: { listChanged: !isStatic },      // Dynamic tool updates (disabled in static mode)
+  tools: { listChanged: !isStatic || toolsMode === "auto" }, // Dynamic tool updates
   resources: { subscribe: true, listChanged: true },
   prompts: { listChanged: !isStatic },    // Dynamic prompt updates (disabled in static mode)
   extensions: {
@@ -172,7 +178,7 @@ capabilities: {
 }
 ```
 
-In static mode (`--static` or `SKILLJACK_STATIC=true`), `tools.listChanged` and `prompts.listChanged` are set to `false`. Resource subscriptions remain fully dynamic.
+In static mode (`--static` or `SKILLJACK_STATIC=true`), `prompts.listChanged` is `false`, and so is `tools.listChanged` unless `--tools=auto` (the default). Resource subscriptions remain fully dynamic. Stateless HTTP declares `listChanged: false` for tools, resources and prompts, and `subscribe: false`.
 
 ## Skills extension (SEP-2640)
 
@@ -193,7 +199,7 @@ An entry carries the skill's verbatim `frontmatter` and a complete `resources` m
 | `skill://<skill-path>/<file-path>` | A supporting file inside the skill directory. Listed in `resources/list`, lower priority than `SKILL.md`. |
 | `skill://index.json` | Pre-v1 discovery index (`application/json`), kept for clients that predate `skills/list`. Listed. |
 
-`<skill-path>` is `<prefix>/<baseName>` for prefixed skills (local: dir basename, GitHub: `owner-repo`) or just `<baseName>` for bundled. The final URI segment always equals the frontmatter `name` per SEP. Build/parse via `buildSkillResourceUri()` / `parseSkillResourceUri()` in `skill-discovery.ts`.
+`<skill-path>` is `<prefix>/<baseName>` for prefixed skills (local: dir basename, GitHub: `owner-repo`, well-known: `<host-slug>[_<path-slug>]`) or just `<baseName>` for bundled. The final URI segment always equals the frontmatter `name` per SEP. Build/parse via `buildSkillResourceUri()` / `parseSkillResourceUri()` in `skill-discovery.ts`.
 
 ## Notifications Sent
 
@@ -206,7 +212,7 @@ An entry carries the skill's verbatim `frontmatter` and a complete `resources` m
 
 - ES modules (`.js` extensions in imports)
 - **Tool search / deferred tools:** the skill catalog is delivered through exactly ONE channel, selected by `--catalog=` / `SKILLJACK_CATALOG` (never both simultaneously). In the default `instructions` mode the catalog arrives via the `initialize` handshake and **survives tool search** (verified by evals 2026-07-05: 3/3 previously-failing tasks pass with instructions + tool search on), at the cost of being frozen at startup on stdio (the SDK cannot update instructions after construction). On HTTP the catalog stays fresh for *new* connections: file watchers/polling update skillState and instructions are regenerated per request — but MCP only delivers instructions at `initialize`, so already-connected clients see catalog changes only after reconnecting. In `tool-description` mode the catalog is dynamic via `tools/listChanged`, but clients with tool search / deferred tool loading enabled (default on modern Claude Code) defer MCP tool descriptions out of context, so the model never sees it and won't auto-activate — that mode needs `ENABLE_TOOL_SEARCH=false`. **`tool-description` is legacy and not recommended** (measured 2026-07-06, issue #78): it has no steady-state cost advantage (with tool search off, both modes cost the same ~$0.73–0.94/eval vs $0.15–0.21 for the default, because loading all tool definitions upfront dominates), and its live-refresh advantage is a prompt-cache trap — tool definitions sit at the top of the cached prompt prefix, so every `tools/listChanged` catalog refresh invalidates the entire cache (tools + system prompt + conversation) and re-writes it at cache-write prices. It is retained only as an escape hatch and as the evals' control condition. Issue #78 now tracks only the stdio instructions-freeze gap.
-- Transports: stdio (default, full dynamic refresh + UI config/display tools; `StdioServerTransport` from `@modelcontextprotocol/server/stdio`) or stateless HTTP (`--http`, core skill surface only, per-request `NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined })` from `@modelcontextprotocol/node`, no push notifications). `main()` branches to `startHttpServer()` right after startup discovery, first wiring the same file watchers + remote polling as stdio to a state-only refresh (`refreshSkillState`) — requests read skillState fresh, clients just aren't notified.
+- Transports: stdio (default, full dynamic refresh + UI config/display tools; `StdioServerTransport` from `@modelcontextprotocol/server/stdio`) or stateless HTTP (`--http`, core skill surface only: `load-skill`, `skill-resource`, `skill://` resources, `skills/list` / `skills/get`, and the `/skill` and per-skill prompts; per-request `NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined })` from `@modelcontextprotocol/node`, no push notifications). `main()` branches to `startHttpServer()` right after startup discovery, first wiring the same file watchers + remote polling as stdio to a state-only refresh (`refreshSkillState`) — requests read skillState fresh, clients just aren't notified.
 - Errors logged to stderr (stdout is MCP protocol)
 - Security: path traversal checks via `isPathWithinBase()`
 - File size limit: 1MB default (`MAX_FILE_SIZE_MB` env var to configure)

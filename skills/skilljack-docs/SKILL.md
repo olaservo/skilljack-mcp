@@ -7,7 +7,7 @@ description: Complete documentation for the Skilljack MCP server - tools, prompt
 
 An MCP server that jacks [Agent Skills](https://agentskills.io) directly into your LLM's brain.
 
-> **Recommended:** For best results, use an MCP client that supports `tools/listChanged` notifications (e.g., Claude Code). This enables dynamic skill discovery - when skills are added or modified, the client automatically refreshes its understanding of available skills. Alternatively, use `--static` mode for predictable behavior with a fixed skill set.
+> **Skill changes:** on stdio the default catalog is sent once, at `initialize`, so added or removed skills reach the model's catalog after a restart. Prompts and resources refresh live through `listChanged` notifications. Use `--static` for a fixed skill set.
 
 > **Tool search / deferred tools.** By default, skilljack delivers its skill catalog via MCP **server instructions**, which arrive in the `initialize` handshake and reach the model even when **tool search / deferred tool loading** is enabled (the default on modern Claude Code, ~2.1.x) — automatic skill activation works out of the box. The legacy `--catalog=tool-description` mode (not recommended) delivers the catalog inside the `load-skill` tool description instead, but tool-search clients defer MCP tool descriptions out of context, so that mode requires disabling tool search (e.g. `ENABLE_TOOL_SEARCH=false`) for auto-activation. See [Catalog Delivery](#catalog-delivery).
 
@@ -55,6 +55,10 @@ SKILLS_DIR=/path/to/skills,/path/to/more/skills skilljack-mcp
 
 Each directory is scanned along with its `.claude/skills/` and `skills/` subdirectories for skills. Duplicate skill names are handled by keeping the first occurrence.
 
+Directories come from the command line first, then `SKILLS_DIR`, then `skillDirectories` in `~/.skilljack/config.json`. The first of these that is set is used.
+
+**Skill names are qualified by source:** `<prefix>__<name>`, where the prefix is the local directory's basename, `owner-repo` for GitHub, or a host slug for well-known publishers. Bundled skills such as this one have no prefix. `load-skill`, `skill-resource` and per-skill prompts all take the qualified name, e.g. `my-skills__mcp-server-ts` for a skill in `/path/to/my-skills`.
+
 ### Skill tools and skills-aware hosts
 
 ```bash
@@ -67,7 +71,7 @@ skilljack-mcp --tools=always /path/to/skills
 skilljack-mcp --tools=never /path/to/skills
 ```
 
-`--tools` (or `SKILLJACK_TOOLS`) controls the two skill tools. A host that declares the skills extension, as MCP Inspector and MCPJam do, loads skills itself through `skills/list`, `skills/get` and `resources/read`, so under `auto` the tools are disabled for it right after `initialize` and the catalog in server instructions points it at each skill's `skill://` URI. Over stateless HTTP `auto` behaves as `always`; with `--catalog=tool-description` it is ignored.
+`--tools` (or `SKILLJACK_TOOLS`) controls the two skill tools. A host that declares the skills extension, as MCP Inspector and MCPJam do, loads skills itself through `skills/list`, `skills/get` and `resources/read`, so under `auto` the tools are disabled for it right after `initialize` and the catalog in server instructions points it at each skill's `skill://` URI. Over stateless HTTP `auto` behaves as `always`. With `--catalog=tool-description`, `auto` is ignored, and `never` leaves the client with no catalog, since the catalog lives in the disabled `load-skill` tool.
 
 ### Remote Sources
 
@@ -88,6 +92,29 @@ WELL_KNOWN_ALLOWED_ORIGINS=https://example.com \
 
 Sources can be mixed freely on one command line (local dirs, GitHub URLs, and well-known URLs together).
 
+GitHub URLs take an optional subpath and `@ref`, e.g. `github.com/acme/skills/skills@v1.2.0`, and also accept `/tree/<ref>/<path>` web URLs. Refs that look like a version tag or a commit hash are not pulled or polled.
+
+### Environment Variables
+
+| Variable | Purpose |
+|----------|---------|
+| `SKILLS_DIR` | Comma-separated skill directories |
+| `SKILLJACK_STATIC` | `true`/`1`/`yes` enables static mode |
+| `SKILLJACK_TOOLS` | `auto` (default), `always` or `never` |
+| `SKILLJACK_CATALOG` | `instructions` (default) or `tool-description` |
+| `SKILLJACK_HTTP_PORT` / `SKILLJACK_HTTP` | Serve over HTTP on a port (default 3000), or `true`/`1`/`yes` to enable it on the default port |
+| `MAX_FILE_SIZE_MB` | Largest skill file served (default 1) |
+| `GITHUB_ALLOWED_ORGS` / `GITHUB_ALLOWED_USERS` | Comma-separated GitHub owners allowed as sources |
+| `GITHUB_TOKEN` | Token for private repos |
+| `GITHUB_POLL_INTERVAL_MS` | GitHub poll interval (default 300000, `0` disables) |
+| `SKILLJACK_CACHE_DIR` | Cache root (default `~/.skilljack/github-cache`) |
+| `WELL_KNOWN_ALLOWED_ORIGINS` | Comma-separated origins allowed as well-known publishers |
+| `WELL_KNOWN_POLL_INTERVAL_MS` | Well-known poll interval (default 300000, `0` disables) |
+| `WELL_KNOWN_MAX_ARTIFACT_MB` / `WELL_KNOWN_MAX_UNPACKED_MB` | Download and unpacked size caps (default 10 and 50) |
+| `WELL_KNOWN_ALLOW_HTTP` | Allow `http://` origins (development only) |
+
+The allowlists can also be set in `~/.skilljack/config.json` or the configuration UI. The env vars take precedence.
+
 ### Static Mode
 
 By default, Skilljack MCP watches skill directories for changes and notifies clients when skills are added, modified, or removed.
@@ -103,7 +130,8 @@ SKILLJACK_STATIC=true skilljack-mcp /path/to/skills
 In static mode:
 - Skills are discovered once at startup and never refreshed
 - No file watchers are set up for skill directories
-- `tools.listChanged` and `prompts.listChanged` capabilities are `false`
+- `prompts.listChanged` is `false`, and so is `tools.listChanged` unless `--tools=auto` (the default)
+- The configuration and skill display UIs and their `/skill-config` and `/skills` prompts are not registered
 - Resource subscriptions remain fully dynamic (individual skill files can still be watched)
 
 Use static mode when you need predictable behavior or have a fixed set of skills that won't change during the session.
@@ -136,7 +164,9 @@ By default skilljack communicates over **stdio**. To serve over **stateless Stre
 skilljack-mcp --http=3000 /path/to/skills
 ```
 
-Clients connect at `POST /mcp`. HTTP mode serves the core skill surface — `load-skill`, `skill-resource`, `skill://` resources, and `/skill` prompts. Discovery-on-change works the same as stdio: file watchers and remote-source polling keep the skill state fresh, and every request reads it — so newly connecting clients get a current catalog, and `load-skill`/`tools/list` reflect changes immediately. Because the transport is stateless (no session, no server→client stream), it does **not** *push* `listChanged` / `resources/updated` notifications — already-connected clients see changes on their next request (for the instructions catalog, on their next reconnect). The UI config/display tools are stdio-only.
+Use the `=` form: `--http 3000` treats `3000` as a skill directory. `--http=0` binds a free port. The server listens on all interfaces and has no authentication.
+
+Clients connect at `POST /mcp`. HTTP mode serves the core skill surface — `load-skill`, `skill-resource`, `skill://` resources, `skills/list` / `skills/get`, and the `/skill` and per-skill prompts. It declares `listChanged: false` for tools, resources and prompts, and `subscribe: false`. Discovery-on-change works the same as stdio: file watchers and remote-source polling keep the skill state fresh, and every request reads it — so newly connecting clients get a current catalog, and `load-skill`/`tools/list` reflect changes immediately. Because the transport is stateless (no session, no server→client stream), it does **not** *push* `listChanged` / `resources/updated` notifications — already-connected clients see changes on their next request (for the instructions catalog, on their next reconnect). The UI config/display tools are stdio-only.
 
 ## Configuration UI
 
@@ -151,7 +181,9 @@ The UI displays:
 - Status indicators showing which directories are from config vs command-line
 - Options to add new directories or remove existing ones
 
-Changes made through the UI are persisted to the server's configuration. Clients that support `tools/listChanged` notifications will see updates immediately; others may require reconnection.
+The UI also manages the GitHub and well-known allowlists and the static-mode setting.
+
+Changes are saved to `~/.skilljack/config.json`. Directory changes take effect only when no directories are given on the command line or in `SKILLS_DIR`. On stdio the default instructions catalog does not change until restart; prompts and resources update live.
 
 ## Skill Display UI
 
@@ -163,7 +195,7 @@ View all available skills and customize their invocation settings through the sk
 
 The UI displays:
 - All discovered skills with name, description, and file path
-- **Source indicators** showing whether each skill is from a local directory, a GitHub repository, or a well-known publisher
+- **Source indicators** showing whether each skill is from a local directory, a GitHub repository, a well-known publisher, or bundled with the server
 - **Invocation toggles** to enable/disable Assistant (model auto-invoke) and User (prompts menu) visibility
 - **Customized badge** when settings differ from frontmatter defaults
 
@@ -276,7 +308,7 @@ This follows the Agent Skills spec's progressive disclosure pattern - resources 
 **Read a single file:**
 ```json
 {
-  "skill": "mcp-server-ts",
+  "skill": "my-skills__mcp-server-ts",
   "path": "snippets/tools/echo.ts"
 }
 ```
@@ -284,18 +316,18 @@ This follows the Agent Skills spec's progressive disclosure pattern - resources 
 **Read all files in a directory:**
 ```json
 {
-  "skill": "algorithmic-art",
+  "skill": "my-skills__algorithmic-art",
   "path": "templates"
 }
 ```
 Returns all files in the directory as multiple content items.
 
-**Binary files:** a file whose MIME type is not a text type (an image, a font, a PDF, an archive), or whose bytes are not valid UTF-8 (a Latin-1 CSV), is returned as an embedded resource: `{ type: "resource", resource: { uri: "skill://...", mimeType, blob } }` with the bytes base64-encoded. In a directory read such a file is listed with its MIME type and size instead of its bytes. Only files `resources/list` advertises are served: hidden files, symlinks, `node_modules` and `SKILL.md` are refused (use `load-skill` for `SKILL.md`).
+**Binary files:** a file whose MIME type is not a text type (an image, a font, a PDF, an archive), or whose bytes are not valid UTF-8 (a Latin-1 CSV), is returned as an embedded resource: `{ type: "resource", resource: { uri: "skill://...", mimeType, blob } }` with the bytes base64-encoded. In a directory read such a file is listed with its MIME type and size instead of its bytes. Only files `resources/list` advertises are served: hidden files and directories, symlinks, `node_modules` and `SKILL.md` are refused (use `load-skill` for `SKILL.md`).
 
 **List available files** (pass empty path):
 ```json
 {
-  "skill": "mcp-server-ts",
+  "skill": "my-skills__mcp-server-ts",
   "path": ""
 }
 ```
@@ -304,7 +336,7 @@ Returns all files in the directory as multiple content items.
 
 ## Prompts
 
-Skills can be loaded via MCP [Prompts](https://modelcontextprotocol.io/specification/2025-11-05/server/prompts) for explicit user invocation.
+Skills can be loaded via MCP [Prompts](https://modelcontextprotocol.io/specification/2025-11-25/server/prompts) for explicit user invocation.
 
 ### `/skill` Prompt
 
@@ -313,17 +345,21 @@ Load a skill by name with auto-completion support.
 **Arguments:**
 - `name` (string, required) - Skill name with auto-completion
 
-The prompt description includes all available skills for discoverability. As you type the skill name, matching skills are suggested.
+The prompt description lists user-invocable skills. As you type the skill name, matching skills are suggested, including ones hidden with `user-invocable: false`, and any skill can be loaded by name.
 
 ### Per-Skill Prompts
 
-Each discovered skill is also registered as its own prompt (e.g., `/mcp-server-ts`, `/algorithmic-art`).
+Each user-invocable skill is also registered as its own prompt under its qualified name (e.g., `/my-skills__mcp-server-ts`).
 
 - No arguments needed - just select and invoke
 - Description shows the skill's own description
 - List updates dynamically as skills change
 
-**Example:** If you have a skill named `mcp-server-ts`, you can invoke it directly as `/mcp-server-ts`.
+**Example:** A skill named `mcp-server-ts` in `/path/to/my-skills` is invoked as `/my-skills__mcp-server-ts`.
+
+### `/skills` and `/skill-config` Prompts
+
+These ask the model to open the skill display and configuration UIs. They are registered only where those UIs are: on stdio, outside static mode.
 
 ### Content Annotations
 
@@ -361,13 +397,13 @@ An entry is `{ uri, frontmatter, resources }`: the `SKILL.md` URI, the parsed fr
 
 A client that declares the extension in its own capabilities is expected to load skills this way, so by default it is not offered the `load-skill` / `skill-resource` tools; see `--tools` under [Usage](#skill-tools-and-skills-aware-hosts).
 
-`<skill-path>` is `<prefix>/<baseName>` for prefixed skills (the prefix segments come from the skill's source — e.g., a local directory basename or `owner-repo` for GitHub-sourced skills) or just `<baseName>` for bundled skills. The final `<skill-path>` segment always matches the `name` field in the skill's frontmatter, per SEP.
+`<skill-path>` is `<prefix>/<baseName>` for prefixed skills (the prefix segments come from the skill's source — a local directory basename, `owner-repo` for GitHub-sourced skills, or a host slug for well-known publishers) or just `<baseName>` for bundled skills. The final `<skill-path>` segment always matches the `name` field in the skill's frontmatter, per SEP.
 
 ### Resource Subscriptions
 
 Clients can subscribe to resources for real-time updates when files change.
 
-**Capability:** `resources: { subscribe: true, listChanged: true }`
+**Capability:** `resources: { subscribe: true, listChanged: true }` (stdio only; stateless HTTP does not support subscriptions)
 
 **Subscribe to a resource:**
 ```
@@ -429,14 +465,15 @@ When a user's task matches a skill description below: 1) activate it, 2) follow 
 
 <available_skills>
 <skill>
-<name>mcp-server-ts</name>
+<name>my-skills__mcp-server-ts</name>
 <description>Build TypeScript MCP servers with composable code snippets...</description>
+<uri>skill://my-skills/mcp-server-ts/SKILL.md</uri>
 <location>C:/path/to/mcp-server-ts/SKILL.md</location>
 </skill>
 </available_skills>
 ```
 
-In tool-description mode this metadata is dynamically updated when skills change — clients supporting `tools/listChanged` will automatically refresh. In the default instructions mode it is generated at startup (stdio) or per request (HTTP).
+In instructions mode the catalog is preceded by a paragraph on how to load a skill, which depends on `--tools`. In tool-description mode this metadata is dynamically updated when skills change — clients supporting `tools/listChanged` will automatically refresh. In the default instructions mode it is generated at startup (stdio) or per request (HTTP).
 
 ## Skill Discovery
 
@@ -445,7 +482,7 @@ Skills are discovered at startup from the configured directories. For each direc
 - `.claude/skills/` subdirectory
 - `skills/` subdirectory
 
-Each skill subdirectory must contain a `SKILL.md` file with YAML frontmatter including `name` and `description` fields.
+Each skill subdirectory must contain a `SKILL.md` (or `skill.md`) file with YAML frontmatter including `name` and `description` fields.
 
 ## Skill Visibility Control
 
@@ -481,7 +518,7 @@ user-invocable: false
 ---
 ```
 
-Note: Resources (`skill://` URIs) always include all skills regardless of visibility settings, allowing explicit access when needed.
+Note: Resources (`skill://` URIs) always include all skills regardless of visibility settings, allowing explicit access when needed. `load-skill` and `/skill` also load hidden skills by name.
 
 ## Testing
 

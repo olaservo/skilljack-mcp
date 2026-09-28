@@ -60,6 +60,7 @@ npm run eval -- --task=greeting --mode=cli-local
 npm run eval:greeting
 npm run eval:code-style
 npm run eval:template
+npm run eval:xlsx-openpyxl   # also eval:xlsx-formulas, eval:xlsx-financial, eval:xlsx-verify
 
 # Run with custom model
 npm run eval -- --model=claude-haiku-4-5
@@ -69,7 +70,7 @@ npm run eval -- --model=claude-haiku-4-5
 
 | Mode | Skill Delivery | Tool Used | Runtime |
 |------|----------------|-----------|---------|
-| `mcp` | skilljack MCP server | `mcp__skilljack__skill` | Agent SDK |
+| `mcp` | skilljack MCP server | `mcp__skilljack__load-skill` | Agent SDK |
 | `local` | `.claude/skills/` directory | `Skill` | Agent SDK |
 | `cli-local` | `.claude/skills/` directory | `Skill` | Claude Code CLI |
 | `mcp+local` | Both MCP server AND `.claude/skills/` | Either tool | Agent SDK |
@@ -84,7 +85,7 @@ npm run eval -- --model=claude-haiku-4-5
 - Uses SDK's local skill discovery (`settingSources`)
 - Cleaned up after eval completes
 - Tests local skill file support via Agent SDK
-- **Note**: Requires `systemPrompt: { type: 'preset', preset: 'claude_code' }` — the SDK's default minimal prompt lacks skill awareness
+- Uses the same minimal system prompt as MCP mode
 
 ### CLI Local Mode
 - Skills copied to `.claude/skills/` before eval
@@ -123,19 +124,21 @@ evals/
 ├── lib/
 │   ├── metrics.ts       # Logging and metrics utilities
 │   ├── eval-checker.ts  # Pass/fail analysis logic
-│   └── options-builder.ts
+│   └── options-builder.ts # Agent SDK options per mode; starts skilljack over HTTP
 ├── skills/              # Test skills with known behaviors
 │   ├── greeting/SKILL.md
 │   ├── code-style/SKILL.md
-│   └── template-generator/
-│       ├── SKILL.md
-│       └── templates/config.json
+│   ├── template-generator/
+│   │   ├── SKILL.md
+│   │   └── templates/config.json
+│   └── xlsx/            # SKILL.md, recalc.py, LICENSE.txt
 ├── tasks/               # Task configs (prompt + expected outcomes)
 │   ├── greeting.json
 │   ├── code-style.json
-│   └── template-generator.json
-├── logs/                # Session logs (gitignored)
-└── results/             # Result summaries (gitignored)
+│   ├── template-generator.json
+│   └── xlsx-*.json      # openpyxl, formulas, financial, verify
+├── logs/                # Session logs (created on first run, gitignored)
+└── results/             # Result summaries (created on first run, gitignored)
 ```
 
 ## Adding New Evals
@@ -163,13 +166,13 @@ evals/
 
 ## Notes
 
-- Uses Claude Code's default system prompt (no custom tuning)
+- SDK modes use a minimal system prompt ("You are a helpful assistant. Use the tools available to you to complete the user's request."), plus the task's `systemPrompt` if set. `cli-local` uses the CLI's own default.
 
 ### Observed Behaviors
 
 **"Noodling" without skill activation**: In some modes, the agent may explore the codebase (Glob, Read, Bash) to find skill files directly rather than using the skill tool. This is less efficient but can still achieve the goal. Current evals don't count this as "activation" - only explicit skill tool calls are tracked.
 
-**Context duplication in mcp+local mode**: When both MCP and local skills are enabled, the same skill appears twice (via MCP tool description AND `.claude/skills/` files). This may cause context bloat and could affect which mechanism the agent chooses.
+**Context duplication in mcp+local mode**: When both MCP and local skills are enabled, the same skill appears twice (via MCP server instructions, or the tool description with `--catalog=tool-description`, AND `.claude/skills/` files). This may cause context bloat and could affect which mechanism the agent chooses.
 
 **Activation differences by mode**: Initial testing showed local mode activated skills more readily than MCP mode for the same prompts. Investigation revealed this is due to the local Skill tool description containing explicit activation triggers:
 
