@@ -101,6 +101,18 @@ describe("skill-resource tool file contents", () => {
     }
   });
 
+  it("refuses directory reads of hidden directories and node_modules", async () => {
+    const client = await connect();
+    fs.mkdirSync(path.join(root, "bin", "node_modules", "pkg"), { recursive: true });
+    fs.writeFileSync(path.join(root, "bin", "node_modules", "pkg", "index.js"), "TOKEN\n");
+    for (const dir of [".secrets", "node_modules", "node_modules/pkg", "assets/../.secrets"]) {
+      const result = await client.callTool({ name: "skill-resource", arguments: { skill: "bin", path: dir } });
+      expect(result.isError, dir).toBe(true);
+      const [content] = result.content as Content[];
+      expect(content.type, dir).toBe("text");
+    }
+  });
+
   it("describes binary files in a directory read instead of dumping their bytes", async () => {
     const client = await connect();
     const contents = await read(client, "assets");

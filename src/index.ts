@@ -39,7 +39,7 @@ import {
 } from "./skill-tool.js";
 import { pruneDigestCache } from "./skill-entries.js";
 import { registerSkillResources } from "./skill-resources.js";
-import { registerSkillPrompts, refreshPrompts, PromptRegistry } from "./skill-prompts.js";
+import { registerSkillPrompts, registerUiPrompts, refreshPrompts, PromptRegistry } from "./skill-prompts.js";
 import { startHttpServer } from "./http-transport.js";
 import {
   createSubscriptionManager,
@@ -1021,6 +1021,8 @@ async function main() {
       console.error("Invocation settings changed via UI. Refreshing skills...");
       refreshSkills(currentSkillsDirs, server, skillTool, promptRegistry, subscriptionManager);
     });
+
+    registerUiPrompts(server);
   }
 
   // Set up file watchers and remote-source polling (skip in static mode).

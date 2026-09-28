@@ -42,6 +42,12 @@ describe("stateless HTTP transport", () => {
       const resources = await client.listResources();
       const uris = resources.resources.map((r) => r.uri);
       expect(uris).toContain("skill://test-skill/SKILL.md");
+
+      // The UI tools are stdio-only, so the prompts that open them are too.
+      const prompts = (await client.listPrompts()).prompts.map((p) => p.name);
+      expect(prompts).toContain("skill");
+      expect(prompts).not.toContain("skills");
+      expect(prompts).not.toContain("skill-config");
     } finally {
       await client.close().catch(() => {});
       await transport.close().catch(() => {});

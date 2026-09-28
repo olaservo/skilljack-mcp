@@ -485,6 +485,28 @@ export function isListedSkillFile(skillDir: string, rel: string): boolean {
 }
 
 /**
+ * Whether `rel` names a directory `listSkillFiles(skillDir)` would descend
+ * into. The skill root ("") counts. Same rules as isListedSkillFile.
+ */
+export function isListedSkillDir(skillDir: string, rel: string): boolean {
+  if (rel === "") return true;
+  if (path.isAbsolute(rel)) return false;
+  const segments = rel.split("/");
+  if (segments.length > MAX_DIRECTORY_DEPTH) return false;
+  let current = skillDir;
+  for (const seg of segments) {
+    if (seg === "" || seg === "." || seg === ".." || seg.startsWith(".") || seg === "node_modules") return false;
+    current = path.join(current, seg);
+    try {
+      if (!fs.lstatSync(current).isDirectory()) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Register the "skill-resource" tool with the MCP server.
  *
  * This tool provides access to files within a skill's directory structure,
@@ -605,7 +627,19 @@ function registerSkillResourceTool(
 
       // Handle directories - return all file contents
       if (stat.isDirectory()) {
-        const files = listSkillFiles(skillDir, resourcePath);
+        const relDir = path.relative(skillDir, fullPath).split(path.sep).join("/");
+        if (!isListedSkillDir(skillDir, relDir)) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Directory "${resourcePath}" is not readable. Hidden directories and node_modules are not served.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        const files = listSkillFiles(skillDir, relDir);
         if (files.length === 0) {
           return {
             content: [
