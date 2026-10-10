@@ -2,10 +2,12 @@
  * Stateless (sessionless) HTTP transport for skilljack.
  *
  * Serves the core skill surface (load-skill, skill-resource, skill:// resources,
- * and /skill prompts) over Streamable HTTP. Each POST /mcp is handled by a
- * fresh McpServer + StreamableHTTPServerTransport with `sessionIdGenerator:
- * undefined` (the SDK's stateless mode), so no session state is retained
- * between requests.
+ * skills/list + skills/get, and /skill prompts) over Streamable HTTP at
+ * POST /mcp through the SDK's era-aware `createMcpHandler`: 2026-07-28 clients
+ * (per-request `_meta` envelope, no initialize handshake) and 2025-era clients
+ * (initialize handshake, served by the handler's stateless legacy fallback)
+ * are both answered by a fresh McpServer from `buildCoreServer` per request,
+ * so no session state is retained between requests.
  *
  * Limitation: stateless mode has no server->client stream, so listChanged /
  * resources/updated notifications are not delivered. Discovery-on-change still
@@ -16,8 +18,8 @@
  */
 
 import * as http from "node:http";
-import { NodeStreamableHTTPServerTransport } from "@modelcontextprotocol/node";
-import { McpServer } from "@modelcontextprotocol/server";
+import { toNodeHandler } from "@modelcontextprotocol/node";
+import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import {
   registerSkillTool,
   installToolsMode,
@@ -82,6 +84,13 @@ const JSONRPC_ERROR = (code: number, message: string) =>
 /**
  * Start a stateless Streamable HTTP MCP server on the given port.
  * Resolves with the listening http.Server once it is accepting connections.
+ *
+ * One factory backs both protocol eras: `createMcpHandler` builds a fresh
+ * core server per request, serving 2026-07-28 traffic natively and 2025-era
+ * traffic through its stateless legacy fallback (`legacy: "stateless"`, the
+ * default). Constructing a `NodeStreamableHTTPServerTransport` by hand would
+ * pin every connection to 2025-11-25, on which `skills/list` / `skills/get`
+ * cannot carry the `ttlMs` / `cacheScope` attributes SEP-2640 requires.
  */
 export async function startHttpServer(
   port: number,
@@ -89,34 +98,30 @@ export async function startHttpServer(
   catalogMode: CatalogMode = "instructions",
   toolsMode: ToolsMode = "auto"
 ): Promise<http.Server> {
+  const handler = createMcpHandler(() => buildCoreServer(skillState, catalogMode, toolsMode), {
+    onerror: (err) => console.error("HTTP MCP:", err.message),
+  });
+  const handleMcp = toNodeHandler(handler, {
+    onerror: (err) => console.error("HTTP MCP request error:", err),
+  });
+
   const httpServer = http.createServer(async (req, res) => {
     const url = req.url ?? "";
-    if (req.method !== "POST" || !(url === "/mcp" || url.startsWith("/mcp?"))) {
+    if (!(url === "/mcp" || url.startsWith("/mcp?"))) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSONRPC_ERROR(-32000, "Not found: MCP is served at POST /mcp"));
+      return;
+    }
+    if (req.method !== "POST") {
+      // Stateless serving has no GET stream and no DELETE session, on either era.
       res.writeHead(405, { "Content-Type": "application/json", Allow: "POST" });
       res.end(JSONRPC_ERROR(-32000, "Only POST /mcp is supported (stateless mode)"));
       return;
     }
-
-    // Fresh server + transport per request (stateless).
-    const server = buildCoreServer(skillState, catalogMode, toolsMode);
-    const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-    res.on("close", () => {
-      transport.close();
-      server.close();
-    });
-
-    try {
-      await server.connect(transport);
-      let body = "";
-      for await (const chunk of req) body += chunk;
-      await transport.handleRequest(req, res, body ? JSON.parse(body) : undefined);
-    } catch (err) {
-      console.error("HTTP MCP request error:", err);
-      if (!res.headersSent) {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSONRPC_ERROR(-32603, "Internal server error"));
-      }
-    }
+    await handleMcp(req, res);
+  });
+  httpServer.on("close", () => {
+    void handler.close();
   });
 
   await new Promise<void>((resolve) => httpServer.listen(port, resolve));

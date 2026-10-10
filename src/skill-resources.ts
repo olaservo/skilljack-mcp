@@ -37,7 +37,6 @@ import {
   listSkillFiles,
   readSkillFile,
   skillFileMimeType,
-  MAX_FILE_SIZE,
   SkillState,
 } from "./skill-tool.js";
 
@@ -205,30 +204,18 @@ function registerSkillTemplate(
 
       // Supporting file inside the skill directory. Only files the skill's
       // entry lists are served, so a read can never return content the
-      // manifest does not cover (hidden files, symlinks, node_modules).
+      // manifest does not cover (hidden files, symlinks, node_modules, files
+      // over MAX_FILE_SIZE) and never fails on a file the manifest does list.
+      // Anything else is -32602, the code SEP-2640 prescribes for a resource
+      // the server does not serve.
       const skillDir = path.dirname(skill.path);
-      const notServed = () =>
-        new ProtocolError(
+      if (!isListedSkillFile(skillDir, fileRelPath)) {
+        throw new ProtocolError(
           ProtocolErrorCode.InvalidParams,
           `Not a file of skill "${skill.baseName}": ${fileRelPath}`
         );
-      if (!isListedSkillFile(skillDir, fileRelPath)) {
-        throw notServed();
       }
-
       const fullPath = path.join(skillDir, fileRelPath);
-      let stat: fs.Stats;
-      try {
-        stat = fs.statSync(fullPath);
-      } catch {
-        throw notServed();
-      }
-      if (stat.size > MAX_FILE_SIZE) {
-        throw new ProtocolError(
-          ProtocolErrorCode.InternalError,
-          `File too large (${stat.size} bytes, max ${MAX_FILE_SIZE}): ${fileRelPath}`
-        );
-      }
 
       // Only bytes that are valid UTF-8 go out as text, so a host hashing
       // what it receives gets the same bytes the entry digests. Anything

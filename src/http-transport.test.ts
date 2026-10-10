@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import * as path from "node:path";
 import type * as http from "node:http";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { SKILLS_LIST_METHOD, SkillsListResultSchema } from "@olaservo/ext-skills/server";
 import { startHttpServer } from "./http-transport.js";
 import { createTestSkill, createTestSkillState } from "./__test-helpers__/helpers.js";
 import { BUNDLED_SKILL_SOURCE } from "./skill-discovery.js";
@@ -51,6 +52,52 @@ describe("stateless HTTP transport", () => {
     } finally {
       await client.close().catch(() => {});
       await transport.close().catch(() => {});
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("serves 2026-07-28 and 2025-era clients from one factory, with caching attributes only on the former", async () => {
+    const skillPath = path.join(FIXTURES_DIR, "valid-skill", "SKILL.md");
+    const state = createTestSkillState([
+      createTestSkill({
+        name: "test-skill",
+        baseName: "test-skill",
+        path: skillPath,
+        source: BUNDLED_SKILL_SOURCE,
+      }),
+    ]);
+    const server = await startHttpServer(0, state);
+    const url = new URL(`http://127.0.0.1:${portOf(server)}/mcp`);
+
+    async function skillsListAs(client: Client) {
+      const transport = new StreamableHTTPClientTransport(url);
+      try {
+        await client.connect(transport);
+        return {
+          version: client.getNegotiatedProtocolVersion(),
+          list: await client.request({ method: SKILLS_LIST_METHOD, params: {} }, SkillsListResultSchema),
+        };
+      } finally {
+        await client.close().catch(() => {});
+        await transport.close().catch(() => {});
+      }
+    }
+
+    try {
+      const modern = await skillsListAs(
+        new Client({ name: "modern", version: "0.0.1" }, { versionNegotiation: { mode: "auto" } })
+      );
+      expect(modern.version).toBe("2026-07-28");
+      expect(modern.list.skills.map((s) => s.uri)).toEqual(["skill://test-skill/SKILL.md"]);
+      expect(typeof modern.list.ttlMs).toBe("number");
+      expect(["public", "private"]).toContain(modern.list.cacheScope);
+
+      const legacy = await skillsListAs(new Client({ name: "legacy", version: "0.0.1" }));
+      expect(legacy.version).not.toBe("2026-07-28");
+      expect(legacy.list.skills.map((s) => s.uri)).toEqual(["skill://test-skill/SKILL.md"]);
+      expect(legacy.list).not.toHaveProperty("ttlMs");
+      expect(legacy.list).not.toHaveProperty("cacheScope");
+    } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });

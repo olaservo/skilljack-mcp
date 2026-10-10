@@ -22,7 +22,7 @@
  */
 
 import { McpServer, RegisteredTool } from "@modelcontextprotocol/server";
-import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import chokidar from "chokidar";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -882,166 +882,185 @@ async function main() {
   // set once at construction, so the catalog is frozen until restart on stdio)
   // or the load-skill tool description (`--catalog=tool-description`; dynamic
   // via tools/listChanged, but deferred out of context under tool search).
-  const initialInstructions = getServerInstructions(skillState, catalogMode, toolsMode);
+  //
+  // The server is built by a factory handed to the SDK's era-aware
+  // `serveStdio`, which owns the protocol-revision decision for the stdio
+  // connection: a 2026-07-28 client (per-request `_meta` envelope, no
+  // initialize handshake) and a 2025-era client (initialize handshake) are
+  // both served from the same definition. Hand-wiring `StdioServerTransport`
+  // + `server.connect()` would pin the connection to 2025-11-25, on which
+  // `skills/list` / `skills/get` cannot carry the `ttlMs` / `cacheScope`
+  // attributes SEP-2640 requires. The factory may run more than once in a
+  // process (a `server/discover` probe instance is discarded if the client
+  // then opens with `initialize`), so each call builds a fresh McpServer.
 
-  const server = new McpServer(
-    {
-      name: "skilljack-mcp",
-      version: "0.14.1",
-    },
-    {
-      capabilities: {
-        // In --tools=auto the skill tools may be disabled right after
-        // initialize, which the SDK announces with tools/list_changed.
-        tools: { listChanged: !isStatic || toolsMode === "auto" },
-        resources: { subscribe: true, listChanged: true },
-        prompts: { listChanged: !isStatic },
-        // SEP-2640 (Skills Extension): https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640
-        extensions: {
-          "io.modelcontextprotocol/skills": {},
-        },
-      },
-      ...(initialInstructions !== undefined && { instructions: initialInstructions }),
-    }
-  );
-
-  // Register tools, resources, and prompts
-  const skillTools = registerSkillTool(server, skillState, catalogMode);
-  const skillTool = skillTools.loadSkill;
-  registerSkillResources(server, skillState);
-  const promptRegistry = registerSkillPrompts(server, skillState);
-
-  // Register subscription handlers for resource file watching
-  registerSubscriptionHandlers(server, skillState, subscriptionManager);
-
-  // Register skill-config tool for UI-based directory configuration
-  // Skip in static mode since skills list is frozen
+  // File watchers and remote-source polling are per process, not per server
+  // instance: wire them once, to whichever instance currently serves the
+  // connection (state-only refresh until the first instance exists).
+  let refreshAll: () => void = () => refreshSkillState(currentSkillsDirs);
   if (!isStatic) {
-    registerSkillConfigTool(server, skillState, async () => {
-      // Callback when directories or remote-source settings change via UI.
-      // Reload directories from config and refresh skills.
-      const newPaths = getActiveDirectories();
-      const {
-        localDirs: newLocalDirs,
-        githubSpecs: newGithubSpecs,
-        wellKnownSpecs: newWellKnownSpecs,
-      } = classifyPaths(newPaths);
-
-      // Get fresh configs (in case allowlists changed)
-      const freshGithubConfig = getGitHubConfig();
-      const freshWellKnownConfig = getWellKnownConfig();
-
-      // Filter GitHub specs by allowlist and sync
-      const allowedGithubSpecs: GitHubRepoSpec[] = [];
-      for (const spec of newGithubSpecs) {
-        if (isRepoAllowed(spec, freshGithubConfig)) {
-          allowedGithubSpecs.push(spec);
-        } else {
-          console.error(`Blocked: ${spec.owner}/${spec.repo} not in allowed orgs/users.`);
-        }
-      }
-
-      let newGithubDirs: string[] = [];
-      if (allowedGithubSpecs.length > 0) {
-        console.error(`Syncing ${allowedGithubSpecs.length} GitHub repo(s)...`);
-        const syncOptions: SyncOptions = {
-          cacheDir: freshGithubConfig.cacheDir,
-          token: freshGithubConfig.token,
-          shallowClone: true,
-        };
-        const results = await syncAllRepos(allowedGithubSpecs, syncOptions);
-        for (const result of results) {
-          if (!result.error) {
-            newGithubDirs.push(result.localPath);
-          }
-        }
-        console.error(`Successfully synced ${newGithubDirs.length}/${allowedGithubSpecs.length} repo(s)`);
-      }
-
-      // Filter well-known specs by allowlist and sync
-      const allowedWellKnownSpecs: WellKnownSpec[] = [];
-      for (const spec of newWellKnownSpecs) {
-        if (isOriginAllowed(spec, freshWellKnownConfig)) {
-          allowedWellKnownSpecs.push(spec);
-        } else {
-          console.error(`Blocked: ${spec.origin} not in allowed origins.`);
-        }
-      }
-
-      let newWellKnownDirs: string[] = [];
-      if (allowedWellKnownSpecs.length > 0) {
-        console.error(`Syncing ${allowedWellKnownSpecs.length} well-known publisher(s)...`);
-        const wkSyncOptions: WellKnownSyncOptions = {
-          cacheDir: freshWellKnownConfig.cacheDir,
-          maxArtifactBytes: freshWellKnownConfig.maxArtifactBytes,
-          maxUnpackedBytes: freshWellKnownConfig.maxUnpackedBytes,
-          allowedOrigins: freshWellKnownConfig.allowedOrigins,
-          allowHttp: freshWellKnownConfig.allowHttp,
-        };
-        const wkResults = await syncAllWellKnown(allowedWellKnownSpecs, wkSyncOptions);
-        for (const result of wkResults) {
-          if (!result.error) {
-            newWellKnownDirs.push(result.localPath);
-          }
-        }
-        console.error(
-          `Successfully synced ${newWellKnownDirs.length}/${allowedWellKnownSpecs.length} publisher(s)`
-        );
-      }
-
-      // Update current state
-      currentGithubSpecs = allowedGithubSpecs;
-      currentWellKnownSpecs = allowedWellKnownSpecs;
-      githubDirs = newGithubDirs;
-      wellKnownDirs = newWellKnownDirs;
-      // Include bundled skills (last, so user skills take precedence)
-      currentSkillsDirs = [
-        ...newLocalDirs,
-        ...newGithubDirs,
-        ...newWellKnownDirs,
-        ...(hasBundledSkills ? [bundledSkillsDir] : []),
-      ];
-      currentSourceMap = buildDirectorySourceMap(
-        newLocalDirs,
-        allowedGithubSpecs,
-        freshGithubConfig.cacheDir,
-        allowedWellKnownSpecs,
-        freshWellKnownConfig.cacheDir,
-        hasBundledSkills ? bundledSkillsDir : undefined
-      );
-
-      console.error(`Config changed via UI. Directories: ${currentSkillsDirs.join(", ") || "(none)"}`);
-      refreshSkills(currentSkillsDirs, server, skillTool, promptRegistry, subscriptionManager);
-    });
-
-    // Register skill-display tool for UI-based invocation settings
-    registerSkillDisplayTool(server, skillState, () => {
-      // Callback when invocation settings change via UI
-      // Refresh skills to apply new overrides
-      console.error("Invocation settings changed via UI. Refreshing skills...");
-      refreshSkills(currentSkillsDirs, server, skillTool, promptRegistry, subscriptionManager);
-    });
-
-    registerUiPrompts(server);
-  }
-
-  // Set up file watchers and remote-source polling (skip in static mode).
-  // On stdio a refresh also updates the tool/prompts and pushes notifications.
-  if (!isStatic) {
-    const refreshAll = () =>
-      refreshSkills(currentSkillsDirs, server, skillTool, promptRegistry, subscriptionManager);
     if (currentSkillsDirs.length > 0) {
-      watchSkillDirectories(currentSkillsDirs, refreshAll);
+      watchSkillDirectories(currentSkillsDirs, () => refreshAll());
     }
-    startRemoteSourcePolling(githubConfig, wellKnownConfig, refreshAll);
+    startRemoteSourcePolling(githubConfig, wellKnownConfig, () => refreshAll());
   }
 
-  // Last before connect: hooks oninitialized, which nothing may reassign after.
-  installToolsMode(server, skillTools, toolsMode, catalogMode);
+  const buildStdioServer = (): McpServer => {
+    const initialInstructions = getServerInstructions(skillState, catalogMode, toolsMode);
 
-  // Connect via stdio transport
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+    const server = new McpServer(
+      {
+        name: "skilljack-mcp",
+        version: "0.14.1",
+      },
+      {
+        capabilities: {
+          // In --tools=auto the skill tools may be disabled right after
+          // initialize, which the SDK announces with tools/list_changed.
+          tools: { listChanged: !isStatic || toolsMode === "auto" },
+          resources: { subscribe: true, listChanged: true },
+          prompts: { listChanged: !isStatic },
+          // SEP-2640 (Skills Extension): https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640
+          extensions: {
+            "io.modelcontextprotocol/skills": {},
+          },
+        },
+        ...(initialInstructions !== undefined && { instructions: initialInstructions }),
+      }
+    );
+
+    // Register tools, resources, and prompts
+    const skillTools = registerSkillTool(server, skillState, catalogMode);
+    const skillTool = skillTools.loadSkill;
+    registerSkillResources(server, skillState);
+    const promptRegistry = registerSkillPrompts(server, skillState);
+
+    // Register subscription handlers for resource file watching
+    registerSubscriptionHandlers(server, skillState, subscriptionManager);
+
+    // Register skill-config tool for UI-based directory configuration
+    // Skip in static mode since skills list is frozen
+    if (!isStatic) {
+      registerSkillConfigTool(server, skillState, async () => {
+        // Callback when directories or remote-source settings change via UI.
+        // Reload directories from config and refresh skills.
+        const newPaths = getActiveDirectories();
+        const {
+          localDirs: newLocalDirs,
+          githubSpecs: newGithubSpecs,
+          wellKnownSpecs: newWellKnownSpecs,
+        } = classifyPaths(newPaths);
+
+        // Get fresh configs (in case allowlists changed)
+        const freshGithubConfig = getGitHubConfig();
+        const freshWellKnownConfig = getWellKnownConfig();
+
+        // Filter GitHub specs by allowlist and sync
+        const allowedGithubSpecs: GitHubRepoSpec[] = [];
+        for (const spec of newGithubSpecs) {
+          if (isRepoAllowed(spec, freshGithubConfig)) {
+            allowedGithubSpecs.push(spec);
+          } else {
+            console.error(`Blocked: ${spec.owner}/${spec.repo} not in allowed orgs/users.`);
+          }
+        }
+
+        let newGithubDirs: string[] = [];
+        if (allowedGithubSpecs.length > 0) {
+          console.error(`Syncing ${allowedGithubSpecs.length} GitHub repo(s)...`);
+          const syncOptions: SyncOptions = {
+            cacheDir: freshGithubConfig.cacheDir,
+            token: freshGithubConfig.token,
+            shallowClone: true,
+          };
+          const results = await syncAllRepos(allowedGithubSpecs, syncOptions);
+          for (const result of results) {
+            if (!result.error) {
+              newGithubDirs.push(result.localPath);
+            }
+          }
+          console.error(`Successfully synced ${newGithubDirs.length}/${allowedGithubSpecs.length} repo(s)`);
+        }
+
+        // Filter well-known specs by allowlist and sync
+        const allowedWellKnownSpecs: WellKnownSpec[] = [];
+        for (const spec of newWellKnownSpecs) {
+          if (isOriginAllowed(spec, freshWellKnownConfig)) {
+            allowedWellKnownSpecs.push(spec);
+          } else {
+            console.error(`Blocked: ${spec.origin} not in allowed origins.`);
+          }
+        }
+
+        let newWellKnownDirs: string[] = [];
+        if (allowedWellKnownSpecs.length > 0) {
+          console.error(`Syncing ${allowedWellKnownSpecs.length} well-known publisher(s)...`);
+          const wkSyncOptions: WellKnownSyncOptions = {
+            cacheDir: freshWellKnownConfig.cacheDir,
+            maxArtifactBytes: freshWellKnownConfig.maxArtifactBytes,
+            maxUnpackedBytes: freshWellKnownConfig.maxUnpackedBytes,
+            allowedOrigins: freshWellKnownConfig.allowedOrigins,
+            allowHttp: freshWellKnownConfig.allowHttp,
+          };
+          const wkResults = await syncAllWellKnown(allowedWellKnownSpecs, wkSyncOptions);
+          for (const result of wkResults) {
+            if (!result.error) {
+              newWellKnownDirs.push(result.localPath);
+            }
+          }
+          console.error(
+            `Successfully synced ${newWellKnownDirs.length}/${allowedWellKnownSpecs.length} publisher(s)`
+          );
+        }
+
+        // Update current state
+        currentGithubSpecs = allowedGithubSpecs;
+        currentWellKnownSpecs = allowedWellKnownSpecs;
+        githubDirs = newGithubDirs;
+        wellKnownDirs = newWellKnownDirs;
+        // Include bundled skills (last, so user skills take precedence)
+        currentSkillsDirs = [
+          ...newLocalDirs,
+          ...newGithubDirs,
+          ...newWellKnownDirs,
+          ...(hasBundledSkills ? [bundledSkillsDir] : []),
+        ];
+        currentSourceMap = buildDirectorySourceMap(
+          newLocalDirs,
+          allowedGithubSpecs,
+          freshGithubConfig.cacheDir,
+          allowedWellKnownSpecs,
+          freshWellKnownConfig.cacheDir,
+          hasBundledSkills ? bundledSkillsDir : undefined
+        );
+
+        console.error(`Config changed via UI. Directories: ${currentSkillsDirs.join(", ") || "(none)"}`);
+        refreshSkills(currentSkillsDirs, server, skillTool, promptRegistry, subscriptionManager);
+      });
+
+      // Register skill-display tool for UI-based invocation settings
+      registerSkillDisplayTool(server, skillState, () => {
+        // Callback when invocation settings change via UI
+        // Refresh skills to apply new overrides
+        console.error("Invocation settings changed via UI. Refreshing skills...");
+        refreshSkills(currentSkillsDirs, server, skillTool, promptRegistry, subscriptionManager);
+      });
+
+      registerUiPrompts(server);
+    }
+
+    // Watchers and remote polling (wired once, above) refresh this instance.
+    refreshAll = () =>
+      refreshSkills(currentSkillsDirs, server, skillTool, promptRegistry, subscriptionManager);
+
+    // Last before connect: hooks oninitialized, which nothing may reassign after.
+    installToolsMode(server, skillTools, toolsMode, catalogMode);
+    return server;
+  };
+
+  serveStdio(buildStdioServer, {
+    onerror: (error) => console.error("stdio transport:", error.message),
+  });
   console.error("Skilljack ready. I know kung fu.");
 }
 

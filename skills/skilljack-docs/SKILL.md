@@ -71,7 +71,7 @@ skilljack-mcp --tools=always /path/to/skills
 skilljack-mcp --tools=never /path/to/skills
 ```
 
-`--tools` (or `SKILLJACK_TOOLS`) controls the two skill tools. A host that declares the skills extension, as MCP Inspector and MCPJam do, loads skills itself through `skills/list`, `skills/get` and `resources/read`, so under `auto` the tools are disabled for it right after `initialize` and the catalog in server instructions points it at each skill's `skill://` URI. Over stateless HTTP `auto` behaves as `always`. With `--catalog=tool-description`, `auto` is ignored, and `never` leaves the client with no catalog, since the catalog lives in the disabled `load-skill` tool.
+`--tools` (or `SKILLJACK_TOOLS`) controls the two skill tools. A host that declares the skills extension, as MCP Inspector and MCPJam do, loads skills itself through `skills/list`, `skills/get` and `resources/read`, so under `auto` the tools are disabled for it right after `initialize` and the catalog in server instructions points it at each skill's `skill://` URI. Over stateless HTTP, and on 2026-07-28 connections (which have no `initialize` handshake), `auto` behaves as `always`. With `--catalog=tool-description`, `auto` is ignored, and `never` leaves the client with no catalog, since the catalog lives in the disabled `load-skill` tool.
 
 ### Remote Sources
 
@@ -103,7 +103,7 @@ GitHub URLs take an optional subpath and `@ref`, e.g. `github.com/acme/skills/sk
 | `SKILLJACK_TOOLS` | `auto` (default), `always` or `never` |
 | `SKILLJACK_CATALOG` | `instructions` (default) or `tool-description` |
 | `SKILLJACK_HTTP_PORT` / `SKILLJACK_HTTP` | Serve over HTTP on a port (default 3000), or `true`/`1`/`yes` to enable it on the default port |
-| `MAX_FILE_SIZE_MB` | Largest skill file served (default 1) |
+| `MAX_FILE_SIZE_MB` | Largest supporting file served (default 1 MiB); larger files are left out of listings and manifests rather than listed and refused |
 | `GITHUB_ALLOWED_ORGS` / `GITHUB_ALLOWED_USERS` | Comma-separated GitHub owners allowed as sources |
 | `GITHUB_TOKEN` | Token for private repos |
 | `GITHUB_POLL_INTERVAL_MS` | GitHub poll interval (default 300000, `0` disables) |
@@ -166,7 +166,7 @@ skilljack-mcp --http=3000 /path/to/skills
 
 Use the `=` form: `--http 3000` treats `3000` as a skill directory. `--http=0` binds a free port. The server listens on all interfaces and has no authentication.
 
-Clients connect at `POST /mcp`. HTTP mode serves the core skill surface — `load-skill`, `skill-resource`, `skill://` resources, `skills/list` / `skills/get`, and the `/skill` and per-skill prompts. It declares `listChanged: false` for tools, resources and prompts, and `subscribe: false`. Discovery-on-change works the same as stdio: file watchers and remote-source polling keep the skill state fresh, and every request reads it — so newly connecting clients get a current catalog, and `load-skill`/`tools/list` reflect changes immediately. Because the transport is stateless (no session, no server→client stream), it does **not** *push* `listChanged` / `resources/updated` notifications — already-connected clients see changes on their next request (for the instructions catalog, on their next reconnect). The UI config/display tools are stdio-only.
+Clients connect at `POST /mcp`. Like stdio, HTTP goes through the SDK's era-aware entry point (`createMcpHandler`), so MCP 2026-07-28 clients and 2025-era clients are both served. HTTP mode serves the core skill surface — `load-skill`, `skill-resource`, `skill://` resources, `skills/list` / `skills/get`, and the `/skill` and per-skill prompts. It declares `listChanged: false` for tools, resources and prompts, and `subscribe: false`. Discovery-on-change works the same as stdio: file watchers and remote-source polling keep the skill state fresh, and every request reads it — so newly connecting clients get a current catalog, and `load-skill`/`tools/list` reflect changes immediately. Because the transport is stateless (no session, no server→client stream), it does **not** *push* `listChanged` / `resources/updated` notifications — already-connected clients see changes on their next request (for the instructions catalog, on their next reconnect). The UI config/display tools are stdio-only.
 
 ## Configuration UI
 
@@ -372,7 +372,7 @@ Prompts return embedded resources with the skill's `skill://` URI, allowing clie
 
 ## Resources
 
-Skills are also accessible via MCP [Resources](https://modelcontextprotocol.io/specification/2025-11-25/server/resources#resources) using `skill://` URIs, following the [SEP-2640 Skills Extension](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640) convention. The server advertises support via the `extensions["io.modelcontextprotocol/skills"]` capability key in its `initialize` response.
+Skills are also accessible via MCP [Resources](https://modelcontextprotocol.io/specification/2025-11-25/server/resources#resources) using `skill://` URIs, following the [SEP-2640 Skills Extension](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640) convention. The server advertises support via the `extensions["io.modelcontextprotocol/skills"]` capability key in its capabilities (the `initialize` result on 2025-era connections, `server/discover` on 2026-07-28).
 
 ### URI Patterns
 
@@ -393,7 +393,7 @@ The server declares `io.modelcontextprotocol/skills` in its capabilities and imp
 | `skills/list` | Paginated entries for every served skill, sorted by URI. Each page resumes after the last URI returned, so a refresh between pages never repeats an entry or shifts the ones that follow. |
 | `skills/get` | The entry for one skill by its `SKILL.md` URI, or `-32602` if no skill is served there. |
 
-An entry is `{ uri, frontmatter, resources }`: the `SKILL.md` URI, the parsed frontmatter with every field the author wrote, and a complete manifest of `{ uri, digest, size }` for `SKILL.md` and every supporting file, with `sha256:` digests over raw bytes. A host that holds the entry can verify each file it reads and bind user approval to that exact content. `ttlMs` and `cacheScope` appear only on 2026-07-28+ connections, which this server does not serve yet ([#104](https://github.com/olaservo/skilljack-mcp/issues/104)). `resources/directory/read` is not implemented and `directoryRead` is not declared.
+An entry is `{ uri, frontmatter, resources }`: the `SKILL.md` URI, the parsed frontmatter with every field the author wrote, and a complete manifest of `{ uri, digest, size }` for `SKILL.md` and every supporting file, with `sha256:` digests over raw bytes. A host that holds the entry can verify each file it reads and bind user approval to that exact content. `ttlMs` and `cacheScope` appear on 2026-07-28 connections (both transports use the SDK's era-aware entry points, `serveStdio` and `createMcpHandler`) and are omitted on 2025-era connections, where the result type has no such fields. Supporting files over `MAX_FILE_SIZE_MB` are not served and so are not in the manifest. `resources/directory/read` is not implemented and `directoryRead` is not declared.
 
 A client that declares the extension in its own capabilities is expected to load skills this way, so by default it is not offered the `load-skill` / `skill-resource` tools; see `--tools` under [Usage](#skill-tools-and-skills-aware-hosts).
 
@@ -436,7 +436,7 @@ Subscribing to `skill://index.json` watches every SKILL.md, so any skill change 
 
 Protections in place:
 - Path traversal prevention (symlink-aware)
-- File size limits (1MB default, configurable via `MAX_FILE_SIZE_MB` env var)
+- File size limits (1 MiB default, configurable via `MAX_FILE_SIZE_MB` env var); over-cap supporting files are excluded from every listing instead of being listed and then refused
 - Directory depth limits
 - Skill content is confined to configured directories
 

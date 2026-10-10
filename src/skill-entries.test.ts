@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { Client } from "@modelcontextprotocol/client";
 import { McpServer, InMemoryTransport } from "@modelcontextprotocol/server";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import {
   SKILLS_LIST_METHOD,
   SKILLS_GET_METHOD,
@@ -21,7 +22,7 @@ import {
   registerSkillMethods,
 } from "./skill-entries.js";
 import { BUNDLED_SKILL_SOURCE, discoverSkills } from "./skill-discovery.js";
-import { SkillState } from "./skill-tool.js";
+import { MAX_FILE_SIZE, SkillState } from "./skill-tool.js";
 import {
   createTestSkill,
   createTestSkillState,
@@ -61,6 +62,40 @@ async function connect(skillState: SkillState, register = registerSkillResources
   const client = new Client({ name: "test-client", version: "0.0.1" });
   await client.connect(clientTransport);
   return client;
+}
+
+/**
+ * A 2026-07-28 connection: the SDK's era-aware stdio entry (the one
+ * index.ts uses) over an in-memory pipe, with a client that negotiates the
+ * newest revision. Raw inbound messages are captured so wire-only fields the
+ * client strips on decode (`resultType`) can be asserted too.
+ */
+async function connectModern(skillState: SkillState) {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const handle = serveStdio(
+    () => {
+      const server = new McpServer({ name: "test", version: "0.0.1" });
+      registerSkillResources(server, skillState);
+      return server;
+    },
+    { transport: serverTransport }
+  );
+  const client = new Client(
+    { name: "test-client", version: "0.0.1" },
+    { versionNegotiation: { mode: "auto" } }
+  );
+  await client.connect(clientTransport);
+  const raw: Array<Record<string, unknown>> = [];
+  const inner = clientTransport.onmessage!;
+  clientTransport.onmessage = (message, extra) => {
+    raw.push(message as Record<string, unknown>);
+    inner(message, extra);
+  };
+  const close = async () => {
+    await client.close().catch(() => {});
+    await handle.close().catch(() => {});
+  };
+  return { client, raw, close };
 }
 
 function listSkills(client: Client, cursor?: string) {
@@ -353,6 +388,25 @@ describe("resources/read stays within the manifest", () => {
     expect(sha256Digest(Buffer.from(makeContent.text!, "utf-8"))).toBe(refOf("Makefile").digest);
   });
 
+  it("leaves a file over MAX_FILE_SIZE out of the manifest and refuses to read it", async () => {
+    const skill = bundledSkill("big", { "small.txt": "ok" });
+    fs.writeFileSync(path.join(path.dirname(skill.path), "big.bin"), Buffer.alloc(MAX_FILE_SIZE + 1));
+    const client = await connect(createTestSkillState([skill]));
+
+    const entry = (await listSkills(client)).skills[0];
+    expect((entry.resources as { uri: string }[]).map((r) => r.uri)).toEqual([
+      "skill://big/SKILL.md",
+      "skill://big/small.txt",
+    ]);
+    const listed = (await client.listResources()).resources.map((r) => r.uri);
+    expect(listed).toContain("skill://big/small.txt");
+    expect(listed).not.toContain("skill://big/big.bin");
+    // Not served, so -32602 (not -32603): the manifest and the reads agree.
+    await expect(client.readResource({ uri: "skill://big/big.bin" })).rejects.toMatchObject({
+      code: -32602,
+    });
+  });
+
   it("returns -32602 for a URI no skill serves and for malformed percent-encoding", async () => {
     const client = await connect(resourcefulState());
     await expect(
@@ -361,5 +415,59 @@ describe("resources/read stays within the manifest", () => {
     await expect(
       client.readResource({ uri: "skill://test/resourceful/%E0%A4%A" })
     ).rejects.toMatchObject({ code: -32602 });
+  });
+});
+
+describe("2026-07-28 connections (SEP-2549 caching attributes)", () => {
+  it("negotiates 2026-07-28 and carries ttlMs/cacheScope on skills/list and skills/get", async () => {
+    const { client, raw, close } = await connectModern(resourcefulState());
+    try {
+      expect(client.getNegotiatedProtocolVersion()).toBe("2026-07-28");
+
+      const list = await listSkills(client);
+      expect(list.skills).toHaveLength(1);
+      expect(typeof list.ttlMs).toBe("number");
+      expect(["public", "private"]).toContain(list.cacheScope);
+
+      const got = await getSkill(client, list.skills[0].uri);
+      expect(got.skill).toEqual(list.skills[0]);
+      expect(typeof got.ttlMs).toBe("number");
+      expect(["public", "private"]).toContain(got.cacheScope);
+
+      // The SDK stamps resultType on 2026-07-28 results; the client strips it
+      // on decode, so check the wire.
+      const results = raw
+        .map((m) => m.result as Record<string, unknown> | undefined)
+        .filter((r): r is Record<string, unknown> => r !== undefined && ("skills" in r || "skill" in r));
+      expect(results).toHaveLength(2);
+      for (const r of results) expect(r.resultType).toBe("complete");
+    } finally {
+      await close();
+    }
+  });
+
+  it("still omits them for a 2025-era client of the same factory", async () => {
+    const skillState = resourcefulState();
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const handle = serveStdio(
+      () => {
+        const server = new McpServer({ name: "test", version: "0.0.1" });
+        registerSkillResources(server, skillState);
+        return server;
+      },
+      { transport: serverTransport }
+    );
+    const client = new Client({ name: "test-client", version: "0.0.1" });
+    try {
+      await client.connect(clientTransport);
+      expect(client.getNegotiatedProtocolVersion()).not.toBe("2026-07-28");
+      const list = await listSkills(client);
+      expect(list.skills).toHaveLength(1);
+      expect(list).not.toHaveProperty("ttlMs");
+      expect(list).not.toHaveProperty("cacheScope");
+    } finally {
+      await client.close().catch(() => {});
+      await handle.close().catch(() => {});
+    }
   });
 });

@@ -254,7 +254,10 @@ function disableSkillTools(tools: SkillTools): void {
  * In the legacy tool-description catalog mode the catalog lives in the
  * load-skill description, so auto leaves the tools on there. On the stateless
  * HTTP transport tools/list arrives on a fresh server instance, so callers
- * pass "always" in place of "auto" (see buildCoreServer).
+ * pass "always" in place of "auto" (see buildCoreServer). A 2026-07-28
+ * connection has no initialize handshake at all (the client's capabilities
+ * ride in each request's `_meta` envelope), so `oninitialized` never fires
+ * there and auto likewise leaves the tools on.
  */
 export function installToolsMode(
   server: McpServer,
@@ -326,9 +329,23 @@ export function isPathWithinBase(targetPath: string, baseDir: string): boolean {
   }
 }
 
+/** Whether a regular file is at most MAX_FILE_SIZE bytes (false if it cannot be stat'd). */
+function isServableSize(absPath: string): boolean {
+  try {
+    return fs.statSync(absPath).size <= MAX_FILE_SIZE;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * List files in a skill directory for discovery.
- * Limits recursion depth to prevent DoS from deeply nested directories.
+ * List the supporting files of a skill: the single enumeration behind the
+ * SEP-2640 entry manifest, resources/list, resource completions and the
+ * skill-resource tool, so every surface agrees on which files are served.
+ * Skips hidden entries, node_modules, symlinks, SKILL.md itself and files
+ * over MAX_FILE_SIZE (a file the server refuses to read must not appear in
+ * the manifest, since a host treats the manifest as the complete, readable
+ * set). Limits recursion depth to prevent DoS from deeply nested directories.
  */
 export function listSkillFiles(skillDir: string, subPath: string = "", depth: number = 0): string[] {
   // Prevent excessive recursion
@@ -364,7 +381,8 @@ export function listSkillFiles(skillDir: string, subPath: string = "", depth: nu
       if (
         !entry.name.startsWith(".") &&
         entry.name !== "SKILL.md" &&
-        entry.name !== "skill.md"
+        entry.name !== "skill.md" &&
+        isServableSize(path.join(dirPath, entry.name))
       ) {
         files.push(relativePath.replace(/\\/g, "/"));
       }
@@ -451,7 +469,8 @@ export function readSkillFile(fullPath: string, fileRelPath: string): SkillFileC
  * Whether `rel` names a file `listSkillFiles(skillDir)` would enumerate,
  * answered with per-segment checks and one lstat per path component instead
  * of a directory walk. Applies the same rules: no hidden segments, no
- * node_modules, no symlinks, no SKILL.md, depth at most MAX_DIRECTORY_DEPTH.
+ * node_modules, no symlinks, no SKILL.md, no file over MAX_FILE_SIZE, depth
+ * at most MAX_DIRECTORY_DEPTH.
  */
 export function isListedSkillFile(skillDir: string, rel: string): boolean {
   if (rel === "" || path.isAbsolute(rel)) return false;
@@ -478,7 +497,8 @@ export function isListedSkillFile(skillDir: string, rel: string): boolean {
     if (!stat.isDirectory()) return false;
   }
   try {
-    return fs.lstatSync(path.join(current, leaf)).isFile();
+    const stat = fs.lstatSync(path.join(current, leaf));
+    return stat.isFile() && stat.size <= MAX_FILE_SIZE;
   } catch {
     return false;
   }
@@ -693,6 +713,22 @@ function registerSkillResourceTool(
         return { content: contents };
       }
 
+      // Check file size first so an over-cap file gets a message that says
+      // why; listSkillFiles() leaves such files out of every listing.
+      if (stat.size > MAX_FILE_SIZE) {
+        const sizeMB = (stat.size / 1024 / 1024).toFixed(2);
+        const maxMB = (MAX_FILE_SIZE / 1024 / 1024).toFixed(0);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `File "${resourcePath}" is too large (${sizeMB}MB). Maximum allowed size is ${maxMB}MB (MAX_FILE_SIZE_MB).`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
       // Serve only what listSkillFiles() enumerates, the same set resources/read
       // serves: no hidden files, no node_modules, no SKILL.md (use load-skill).
       const rel = path.relative(skillDir, fullPath).split(path.sep).join("/");
@@ -702,21 +738,6 @@ function registerSkillResourceTool(
             {
               type: "text",
               text: `Resource "${resourcePath}" is not a readable skill file. Hidden files, node_modules and SKILL.md are not served; use load-skill for SKILL.md.`,
-            },
-          ],
-          isError: true,
-        };
-      }
-
-      // Check file size to prevent memory exhaustion
-      if (stat.size > MAX_FILE_SIZE) {
-        const sizeMB = (stat.size / 1024 / 1024).toFixed(2);
-        const maxMB = (MAX_FILE_SIZE / 1024 / 1024).toFixed(0);
-        return {
-          content: [
-            {
-              type: "text",
-              text: `File "${resourcePath}" is too large (${sizeMB}MB). Maximum allowed size is ${maxMB}MB.`,
             },
           ],
           isError: true,

@@ -146,8 +146,9 @@ export function skillEntryUri(skill: SkillMetadata): string {
 /**
  * Build a skill's entry. `resources` lists SKILL.md first, then every file
  * `listSkillFiles` enumerates, which is the same set `resources/list`
- * advertises and `resources/read` serves. Returns null when SKILL.md is
- * unreadable.
+ * advertises and `resources/read` serves (files over MAX_FILE_SIZE are in
+ * neither, so the manifest never names a file a read would refuse). Returns
+ * null when SKILL.md is unreadable.
  */
 export function buildSkillEntry(skill: SkillMetadata): SkillEntry | null {
   const md = fileDigest(skill.path);
