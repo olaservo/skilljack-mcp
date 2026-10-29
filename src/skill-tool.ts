@@ -13,8 +13,7 @@ import { isUtf8 } from "node:buffer";
 import * as path from "node:path";
 import { McpServer, RegisteredTool, CallToolResult } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { SKILLS_EXTENSION_ID } from "@olaservo/ext-skills/server";
-import { getMimeType as sdkMimeType, isTextMimeType } from "@olaservo/ext-skills";
+import { SKILLS_EXTENSION_ID } from "@modelcontextprotocol/server/ext/skills";
 import {
   SkillMetadata,
   loadSkillContent,
@@ -392,6 +391,48 @@ export function listSkillFiles(skillDir: string, subPath: string = "", depth: nu
   return files;
 }
 
+/** MIME types by file extension; anything else is sniffed or octet-stream. */
+const MIME_TYPES: Readonly<Record<string, string>> = {
+  ".md": "text/markdown",
+  ".txt": "text/plain",
+  ".py": "text/x-python",
+  ".js": "text/javascript",
+  ".ts": "text/typescript",
+  ".sh": "text/x-shellscript",
+  ".bash": "text/x-shellscript",
+  ".json": "application/json",
+  ".yaml": "text/yaml",
+  ".yml": "text/yaml",
+  ".xml": "application/xml",
+  ".html": "text/html",
+  ".css": "text/css",
+  ".sql": "text/x-sql",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".svg": "image/svg+xml",
+  ".pdf": "application/pdf",
+};
+
+/** MIME type from the file extension; `application/octet-stream` when unknown. */
+export function getMimeType(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  return Object.hasOwn(MIME_TYPES, ext) ? MIME_TYPES[ext] : "application/octet-stream";
+}
+
+/** Whether a MIME type is text: `text/*`, JSON, XML, JavaScript and `+json` / `+xml` types. */
+export function isTextMimeType(mimeType: string): boolean {
+  return (
+    mimeType.startsWith("text/") ||
+    mimeType === "application/json" ||
+    mimeType === "application/xml" ||
+    mimeType === "application/javascript" ||
+    mimeType.endsWith("+json") ||
+    mimeType.endsWith("+xml")
+  );
+}
+
 /** Bytes read to decide whether a file of unknown type is text. */
 const SNIFF_BYTES = 8192;
 
@@ -429,13 +470,13 @@ function sniffIsUtf8(fullPath: string): boolean {
 }
 
 function mimeTypeFor(fileRelPath: string, sniff: () => boolean): string {
-  const fromTable = sdkMimeType(fileRelPath);
+  const fromTable = getMimeType(fileRelPath);
   if (fromTable !== "application/octet-stream") return fromTable;
   return sniff() ? "text/plain" : fromTable;
 }
 
 /**
- * MIME type for a skill file: the SDK's table for known extensions, and for
+ * MIME type for a skill file: the table above for known extensions, and for
  * anything else text/plain when the bytes look like UTF-8, otherwise
  * application/octet-stream. Used by resources/list, resources/read and the
  * skill-resource tool alike.
@@ -683,7 +724,7 @@ function registerSkillResourceTool(
                 text: `--- ${file} ---\n[File too large: ${(fileStat.size / 1024 / 1024).toFixed(2)}MB]`,
               });
             } else {
-              const known = sdkMimeType(file);
+              const known = getMimeType(file);
               if (known !== "application/octet-stream" && !isTextMimeType(known)) {
                 // Known binary type: nothing to decode, so don't read it.
                 contents.push({

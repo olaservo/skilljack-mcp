@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { Client } from "@modelcontextprotocol/client";
 import { McpServer, InMemoryTransport } from "@modelcontextprotocol/server";
 import type { ClientCapabilities } from "@modelcontextprotocol/client";
-import { SKILLS_EXTENSION_ID } from "@olaservo/ext-skills/server";
+import { SKILLS_EXTENSION_ID } from "@modelcontextprotocol/client/ext/skills";
 import {
   registerSkillTool,
   installToolsMode,

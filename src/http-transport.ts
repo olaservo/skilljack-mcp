@@ -28,7 +28,8 @@ import {
   CatalogMode,
   ToolsMode,
 } from "./skill-tool.js";
-import { registerSkillResources } from "./skill-resources.js";
+import { createSkillsExtension, registerSkillResources } from "./skill-resources.js";
+import type { SkillsExtension } from "@modelcontextprotocol/server/ext/skills";
 import { registerSkillPrompts } from "./skill-prompts.js";
 
 /**
@@ -46,7 +47,8 @@ import { registerSkillPrompts } from "./skill-prompts.js";
 export function buildCoreServer(
   skillState: SkillState,
   catalogMode: CatalogMode = "instructions",
-  toolsMode: ToolsMode = "auto"
+  toolsMode: ToolsMode = "auto",
+  skills: SkillsExtension = createSkillsExtension(skillState)
 ): McpServer {
   // Stateless HTTP builds a server per request, so the initialize handshake
   // is never visible to the instance that answers tools/list: "auto" cannot
@@ -61,17 +63,14 @@ export function buildCoreServer(
         tools: { listChanged: false },
         resources: { subscribe: false, listChanged: false },
         prompts: { listChanged: false },
-        // SEP-2640 (Skills Extension)
-        extensions: {
-          "io.modelcontextprotocol/skills": {},
-        },
+        // The skills extension (SEP-2640) declares its own capability on attach.
       },
       ...(instructions !== undefined && { instructions }),
     }
   );
 
   const skillTools = registerSkillTool(server, skillState, catalogMode);
-  registerSkillResources(server, skillState);
+  registerSkillResources(server, skillState, skills);
   registerSkillPrompts(server, skillState);
   installToolsMode(server, skillTools, effectiveToolsMode, catalogMode);
 
@@ -98,7 +97,9 @@ export async function startHttpServer(
   catalogMode: CatalogMode = "instructions",
   toolsMode: ToolsMode = "auto"
 ): Promise<http.Server> {
-  const handler = createMcpHandler(() => buildCoreServer(skillState, catalogMode, toolsMode), {
+  // One extension instance serves every per-request server.
+  const skills = createSkillsExtension(skillState);
+  const handler = createMcpHandler(() => buildCoreServer(skillState, catalogMode, toolsMode, skills), {
     onerror: (err) => console.error("HTTP MCP:", err.message),
   });
   const handleMcp = toNodeHandler(handler, {

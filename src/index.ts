@@ -38,7 +38,7 @@ import {
   ToolsMode,
 } from "./skill-tool.js";
 import { pruneDigestCache } from "./skill-entries.js";
-import { registerSkillResources } from "./skill-resources.js";
+import { createSkillsExtension, registerSkillResources } from "./skill-resources.js";
 import { registerSkillPrompts, registerUiPrompts, refreshPrompts, PromptRegistry } from "./skill-prompts.js";
 import { startHttpServer } from "./http-transport.js";
 import {
@@ -905,6 +905,9 @@ async function main() {
     startRemoteSourcePolling(githubConfig, wellKnownConfig, () => refreshAll());
   }
 
+  // One skills extension (SEP-2640) serves every server the factory builds.
+  const skillsExtension = createSkillsExtension(skillState);
+
   const buildStdioServer = (): McpServer => {
     const initialInstructions = getServerInstructions(skillState, catalogMode, toolsMode);
 
@@ -920,10 +923,7 @@ async function main() {
           tools: { listChanged: !isStatic || toolsMode === "auto" },
           resources: { subscribe: true, listChanged: true },
           prompts: { listChanged: !isStatic },
-          // SEP-2640 (Skills Extension): https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640
-          extensions: {
-            "io.modelcontextprotocol/skills": {},
-          },
+          // The skills extension (SEP-2640) declares its own capability on attach.
         },
         ...(initialInstructions !== undefined && { instructions: initialInstructions }),
       }
@@ -932,7 +932,7 @@ async function main() {
     // Register tools, resources, and prompts
     const skillTools = registerSkillTool(server, skillState, catalogMode);
     const skillTool = skillTools.loadSkill;
-    registerSkillResources(server, skillState);
+    registerSkillResources(server, skillState, skillsExtension);
     const promptRegistry = registerSkillPrompts(server, skillState);
 
     // Register subscription handlers for resource file watching

@@ -1,5 +1,35 @@
+import { z } from "zod";
 import { SkillMetadata, DEFAULT_SKILL_SOURCE, SkillSource } from "../skill-discovery.js";
 import { SkillState } from "../skill-tool.js";
+
+/**
+ * Result schemas for raw `skills/list` / `skills/get` requests. The SDK's own
+ * schemas follow the stable spec and require `ttlMs` / `cacheScope`, which a
+ * 2025-era connection never carries, so these leave them optional.
+ */
+const SkillEntrySchema = z.looseObject({
+  uri: z.string(),
+  frontmatter: z.looseObject({ name: z.string(), description: z.string() }),
+  resources: z.union([
+    z.array(z.looseObject({ uri: z.string(), digest: z.string(), size: z.number() })),
+    z.literal("dynamic"),
+  ]),
+});
+const cacheFields = {
+  ttlMs: z.number().optional(),
+  cacheScope: z.enum(["public", "private"]).optional(),
+};
+export const LooseListSkillsResultSchema = z.looseObject({
+  skills: z.array(SkillEntrySchema),
+  nextCursor: z.string().optional(),
+  ...cacheFields,
+});
+export const LooseGetSkillResultSchema = z.looseObject({ skill: SkillEntrySchema, ...cacheFields });
+export const LooseDirectoryReadResultSchema = z.looseObject({
+  resources: z.array(z.looseObject({ uri: z.string(), name: z.string(), mimeType: z.string().optional(), size: z.number().optional() })),
+  nextCursor: z.string().optional(),
+  ...cacheFields,
+});
 
 /**
  * Create a test SkillMetadata with sensible defaults.

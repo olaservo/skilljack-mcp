@@ -2,9 +2,13 @@ import { describe, it, expect } from "vitest";
 import * as path from "node:path";
 import type * as http from "node:http";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import { SKILLS_LIST_METHOD, SkillsListResultSchema } from "@olaservo/ext-skills/server";
+import { SKILLS_LIST_METHOD, SkillsClient } from "@modelcontextprotocol/client/ext/skills";
 import { startHttpServer } from "./http-transport.js";
-import { createTestSkill, createTestSkillState } from "./__test-helpers__/helpers.js";
+import {
+  createTestSkill,
+  createTestSkillState,
+  LooseListSkillsResultSchema,
+} from "./__test-helpers__/helpers.js";
 import { BUNDLED_SKILL_SOURCE } from "./skill-discovery.js";
 
 const FIXTURES_DIR = path.resolve(__dirname, "__fixtures__", "skills");
@@ -75,7 +79,7 @@ describe("stateless HTTP transport", () => {
         await client.connect(transport);
         return {
           version: client.getNegotiatedProtocolVersion(),
-          list: await client.request({ method: SKILLS_LIST_METHOD, params: {} }, SkillsListResultSchema),
+          list: await client.request({ method: SKILLS_LIST_METHOD, params: {} }, LooseListSkillsResultSchema),
         };
       } finally {
         await client.close().catch(() => {});
@@ -98,6 +102,41 @@ describe("stateless HTTP transport", () => {
       expect(legacy.list).not.toHaveProperty("ttlMs");
       expect(legacy.list).not.toHaveProperty("cacheScope");
     } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("passes the SDK client's verification on a 2026-07-28 connection", async () => {
+    const skillPath = path.join(FIXTURES_DIR, "with-resources", "SKILL.md");
+    const state = createTestSkillState([
+      createTestSkill({
+        name: "resourceful",
+        baseName: "resourceful",
+        description: "Skill with resource files",
+        path: skillPath,
+        source: BUNDLED_SKILL_SOURCE,
+      }),
+    ]);
+    const server = await startHttpServer(0, state);
+    const client = new Client({ name: "modern", version: "0.0.1" }, { versionNegotiation: { mode: "auto" } });
+    const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${portOf(server)}/mcp`));
+    try {
+      await client.connect(transport);
+      const skills = new SkillsClient(client);
+      expect(skills.supported).toBe(true);
+      expect(skills.directoryRead).toBe(true);
+      const listing = await skills.list();
+      expect(listing.skills.map((s) => s.uri)).toEqual(["skill://resourceful/SKILL.md"]);
+      expect(listing.ttlMs).toBe(0);
+      expect(listing.cacheScope).toBe("private");
+      const [entry] = listing.skills;
+      expect((await skills.read(entry)).verified).toBe(true);
+      expect((await skills.read(entry, "scripts/example.py")).verified).toBe(true);
+      const dir = await skills.readDirectory("skill://resourceful/scripts");
+      expect(dir.resources.map((r) => r.uri)).toEqual(["skill://resourceful/scripts/example.py"]);
+    } finally {
+      await client.close().catch(() => {});
+      await transport.close().catch(() => {});
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -9,17 +9,17 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import {
   SKILLS_LIST_METHOD,
   SKILLS_GET_METHOD,
-  SkillsListResultSchema,
-  SkillsGetResultSchema,
-  sha256Digest,
-} from "@olaservo/ext-skills/server";
-import { registerSkillResources } from "./skill-resources.js";
+  RESOURCES_DIRECTORY_READ_METHOD,
+  SKILLS_EXTENSION_ID,
+  SkillsClient,
+} from "@modelcontextprotocol/client/ext/skills";
+import { createSkillsExtension, registerSkillResources } from "./skill-resources.js";
 import {
   buildSkillEntry,
   clearDigestCache,
   fileDigest,
   pruneDigestCache,
-  registerSkillMethods,
+  sha256Digest,
 } from "./skill-entries.js";
 import { BUNDLED_SKILL_SOURCE, discoverSkills } from "./skill-discovery.js";
 import { MAX_FILE_SIZE, SkillState } from "./skill-tool.js";
@@ -27,6 +27,9 @@ import {
   createTestSkill,
   createTestSkillState,
   createTestSource,
+  LooseDirectoryReadResultSchema,
+  LooseGetSkillResultSchema,
+  LooseListSkillsResultSchema,
 } from "./__test-helpers__/helpers.js";
 
 const FIXTURES_DIR = path.resolve(__dirname, "__fixtures__", "skills");
@@ -49,6 +52,7 @@ function bundledSkill(name: string, files: Record<string, string> = {}) {
   return createTestSkill({
     name,
     baseName: name,
+    description: name,
     path: makeTempSkill({ "SKILL.md": `---\nname: ${name}\ndescription: ${name}\n---\n`, ...files }),
     source: BUNDLED_SKILL_SOURCE,
   });
@@ -101,12 +105,25 @@ async function connectModern(skillState: SkillState) {
 function listSkills(client: Client, cursor?: string) {
   return client.request(
     { method: SKILLS_LIST_METHOD, params: cursor ? { cursor } : {} },
-    SkillsListResultSchema
+    LooseListSkillsResultSchema
   );
 }
 
 function getSkill(client: Client, uri: string) {
-  return client.request({ method: SKILLS_GET_METHOD, params: { uri } }, SkillsGetResultSchema);
+  return client.request({ method: SKILLS_GET_METHOD, params: { uri } }, LooseGetSkillResultSchema);
+}
+
+function readDirectory(client: Client, uri: string, cursor?: string) {
+  return client.request(
+    { method: RESOURCES_DIRECTORY_READ_METHOD, params: cursor ? { uri, cursor } : { uri } },
+    LooseDirectoryReadResultSchema
+  );
+}
+
+/** Register the extension with a page size other than the default. */
+function withPageSize(pageSize: number) {
+  return (server: McpServer, state: SkillState) =>
+    registerSkillResources(server, state, createSkillsExtension(state, { pageSize }));
 }
 
 /** The with-resources fixture (frontmatter name "resourceful") under a "test" prefix. */
@@ -178,9 +195,7 @@ describe("skills/list (SEP-2640)", () => {
   it("paginates in URI order and never splits an entry", async () => {
     const a = bundledSkill("a");
     const b = bundledSkill("b", { "x.md": "x" });
-    const client = await connect(createTestSkillState([b, a]), (server, state) =>
-      registerSkillMethods(server, state, { pageSize: 1 })
-    );
+    const client = await connect(createTestSkillState([b, a]), withPageSize(1));
 
     const first = await listSkills(client);
     expect(first.skills.map((s) => s.uri)).toEqual(["skill://a/SKILL.md"]);
@@ -195,9 +210,7 @@ describe("skills/list (SEP-2640)", () => {
   it("neither skips nor repeats a skill when the map changes between pages", async () => {
     const [a, b, c, d] = ["a", "b", "c", "d"].map((n) => bundledSkill(n));
     const state = createTestSkillState([a, b, c, d]);
-    const client = await connect(state, (server, s) =>
-      registerSkillMethods(server, s, { pageSize: 2 })
-    );
+    const client = await connect(state, withPageSize(2));
 
     const first = await listSkills(client);
     expect(first.skills.map((s) => s.uri)).toEqual(["skill://a/SKILL.md", "skill://b/SKILL.md"]);
@@ -226,6 +239,85 @@ describe("skills/list (SEP-2640)", () => {
     });
     const client = await connect(createTestSkillState([gone]));
     expect((await listSkills(client)).skills).toHaveLength(0);
+  });
+
+  it("declares the extension with directoryRead", async () => {
+    const client = await connect(resourcefulState());
+    expect(client.getServerCapabilities()?.extensions?.[SKILLS_EXTENSION_ID]).toEqual({ directoryRead: true });
+  });
+
+  it("drops a skill whose name breaks the Agent Skills rules, with one warning", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const bad = bundledSkill("Not_Valid");
+    const client = await connect(createTestSkillState([bundledSkill("fine"), bad]));
+    expect((await listSkills(client)).skills.map((s) => s.uri)).toEqual(["skill://fine/SKILL.md"]);
+    await listSkills(client);
+    const warnings = errors.mock.calls.filter((c) => String(c[0]).includes("Not_Valid"));
+    expect(warnings).toHaveLength(1);
+  });
+});
+
+describe("resources/directory/read (SEP-2640)", () => {
+  it("lists SKILL.md and subdirectories at the skill root, files below", async () => {
+    const client = await connect(resourcefulState());
+    const skillDir = path.join(FIXTURES_DIR, "with-resources");
+
+    const root = await readDirectory(client, "skill://test/resourceful");
+    expect(root.resources).toEqual([
+      {
+        uri: "skill://test/resourceful/SKILL.md",
+        name: "SKILL.md",
+        mimeType: "text/markdown",
+        size: fs.statSync(path.join(skillDir, "SKILL.md")).size,
+      },
+      { uri: "skill://test/resourceful/scripts", name: "scripts", mimeType: "inode/directory" },
+      { uri: "skill://test/resourceful/templates", name: "templates", mimeType: "inode/directory" },
+    ]);
+    expect(root).not.toHaveProperty("ttlMs");
+
+    const scripts = await readDirectory(client, "skill://test/resourceful/scripts");
+    expect(scripts.resources).toEqual([
+      {
+        uri: "skill://test/resourceful/scripts/example.py",
+        name: "example.py",
+        mimeType: "text/x-python",
+        size: fs.statSync(path.join(skillDir, "scripts", "example.py")).size,
+      },
+    ]);
+  });
+
+  it("leaves hidden entries, node_modules and over-cap files out of a listing", async () => {
+    const skill = bundledSkill("dir", {
+      ".env": "SECRET=1",
+      "node_modules/x/index.js": "x",
+      "docs/a.md": "a",
+    });
+    fs.writeFileSync(path.join(path.dirname(skill.path), "big.bin"), Buffer.alloc(MAX_FILE_SIZE + 1));
+    const client = await connect(createTestSkillState([skill]));
+    const root = await readDirectory(client, "skill://dir");
+    expect(root.resources.map((r) => r.uri)).toEqual(["skill://dir/SKILL.md", "skill://dir/docs"]);
+  });
+
+  it("paginates in URI order", async () => {
+    const skill = bundledSkill("paged", { "a.md": "a", "b.md": "b", "c.md": "c" });
+    const client = await connect(createTestSkillState([skill]), withPageSize(2));
+    const first = await readDirectory(client, "skill://paged");
+    expect(first.resources.map((r) => r.name)).toEqual(["SKILL.md", "a.md"]);
+    const second = await readDirectory(client, "skill://paged", first.nextCursor);
+    expect(second.resources.map((r) => r.name)).toEqual(["b.md", "c.md"]);
+    expect(second.nextCursor).toBeUndefined();
+  });
+
+  it("returns -32602 for a file, a trailing slash and an unknown directory", async () => {
+    const client = await connect(resourcefulState());
+    for (const uri of [
+      "skill://test/resourceful/SKILL.md",
+      "skill://test/resourceful/",
+      "skill://test/resourceful/nope",
+      "skill://test/nope",
+    ]) {
+      await expect(readDirectory(client, uri), uri).rejects.toMatchObject({ code: -32602 });
+    }
   });
 });
 
@@ -434,13 +526,38 @@ describe("2026-07-28 connections (SEP-2549 caching attributes)", () => {
       expect(typeof got.ttlMs).toBe("number");
       expect(["public", "private"]).toContain(got.cacheScope);
 
+      const dir = await readDirectory(client, "skill://test/resourceful");
+      expect(typeof dir.ttlMs).toBe("number");
+      expect(["public", "private"]).toContain(dir.cacheScope);
+
       // The SDK stamps resultType on 2026-07-28 results; the client strips it
       // on decode, so check the wire.
       const results = raw
         .map((m) => m.result as Record<string, unknown> | undefined)
-        .filter((r): r is Record<string, unknown> => r !== undefined && ("skills" in r || "skill" in r));
-      expect(results).toHaveLength(2);
+        .filter((r): r is Record<string, unknown> => r !== undefined && ("skills" in r || "skill" in r || "resources" in r));
+      expect(results).toHaveLength(3);
       for (const r of results) expect(r.resultType).toBe("complete");
+    } finally {
+      await close();
+    }
+  });
+
+  it("passes the SDK client's verification of every served file", async () => {
+    const skill = bundledSkill("verify", { "docs/a.md": "a" });
+    fs.writeFileSync(path.join(path.dirname(skill.path), "bin.dat"), Buffer.from([0xff, 0xfe, 0x00]));
+    const { client, close } = await connectModern(createTestSkillState([skill]));
+    try {
+      const skills = new SkillsClient(client);
+      expect(skills.directoryRead).toBe(true);
+      const { skills: entries } = await skills.list();
+      expect(entries).toHaveLength(1);
+      const [entry] = entries;
+      expect((await skills.get(entry.uri)).skill).toEqual(entry);
+      for (const ref of [undefined, "docs/a.md", "bin.dat"]) {
+        const file = await skills.read(entry, ref);
+        expect(file.verified, ref ?? "SKILL.md").toBe(true);
+      }
+      expect((await skills.readDirectory("skill://verify/docs")).resources.map((r) => r.name)).toEqual(["a.md"]);
     } finally {
       await close();
     }
