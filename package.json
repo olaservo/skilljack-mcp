@@ -63,7 +63,7 @@
     "@modelcontextprotocol/node": "^2.1.2",
     "@modelcontextprotocol/server": "^2.4.0",
     "chokidar": "^5.0.0",
-    "simple-git": "^3.27.0",
+    "simple-git": "^4.0.2",
     "tar": "^7.4.0",
     "yaml": "^2.7.0",
     "yauzl-promise": "^4.0.0",
