@@ -14,7 +14,7 @@ CI (`.github/workflows/ci.yml`) runs `npm ci`, `npm run build`, and `npm test` o
 
 This package spans two independent bundles that share only the MCP wire format:
 
-- **Server half** (everything except `src/ui/**`) is on **MCP TypeScript SDK v2** — `@modelcontextprotocol/server`, `@modelcontextprotocol/server/stdio`, `@modelcontextprotocol/node` (+ `@modelcontextprotocol/client` in tests only) — and registers its MCP Apps tools and resources through `registerAppTool` / `registerAppResource` from `@modelcontextprotocol/ext-apps/server`. Typechecked by the root `tsconfig.json`, which **excludes `src/ui/**`**.
+- **Server half** (everything except `src/ui/**`) is on **MCP TypeScript SDK v2** (2.4+) — `@modelcontextprotocol/server`, `@modelcontextprotocol/server/stdio`, `@modelcontextprotocol/server/ext/skills`, `@modelcontextprotocol/node` (+ `@modelcontextprotocol/client` and `@modelcontextprotocol/client/ext/skills` in tests only) — and registers its MCP Apps tools and resources through `registerAppTool` / `registerAppResource` from `@modelcontextprotocol/ext-apps/server`. Typechecked by the root `tsconfig.json`, which **excludes `src/ui/**`**.
 - **Browser half** (`src/ui/mcp-app.ts`, `src/ui/skill-display.ts`) imports only `@modelcontextprotocol/ext-apps`, on 2.0.0 since #109 (2026-09-24). Vite bundles it into self-contained HTML that runs in an iframe. Typechecked by `tsconfig.ui.json` (run by `npm run build:ui`).
 - `@modelcontextprotocol/ext-apps` is a runtime **dependency** since the server imports its `/server` helpers (a self-contained module with no imports of its own); its peer dependencies `@modelcontextprotocol/{core,client}` and `zod` install alongside it. Hosts locate a tool's UI by reading `_meta['ui/resourceUri']` and/or `_meta.ui.resourceUri`; `registerAppTool` emits both, and `src/mcp-apps-meta.test.ts` checks that on the wire. The vendored `src/ui-meta.ts` port that bridged the gap while ext-apps had no v2 release is gone, as is the `@modelcontextprotocol/sdk` v1 devDependency it dated from (v1 still appears in the lock file as a peer of `@anthropic-ai/claude-agent-sdk`, used only by the evals).
 
@@ -52,8 +52,8 @@ src/
 ├── skill-discovery.ts     # YAML frontmatter parsing, XML generation
 ├── skill-tool.ts          # MCP tools: load-skill, skill-resource
 ├── skill-prompts.ts       # MCP Prompts: /skill with auto-completion, per-skill prompts, /skills and /skill-config (stdio UI only)
-├── skill-resources.ts     # MCP Resources: SEP-2640 skill:// URI scheme + skill://index.json
-├── skill-entries.ts       # SEP-2640 skills/list + skills/get (entries with per-file digests)
+├── skill-resources.ts     # MCP Resources: SkillSource for the SDK skills extension (skill:// reads, directory reads, resources/list) + skill://index.json
+├── skill-entries.ts       # SEP-2640 entries (per-file digests) behind skills/list + skills/get
 ├── subscriptions.ts       # File watching, resource subscriptions
 ├── skill-config.ts        # Directory/override config (~/.skilljack/config.json)
 ├── skill-config-tool.ts   # MCP tools backing the config UI (skill-config-*)
@@ -118,7 +118,8 @@ Packaging: `manifest.json` + `.mcpbignore` define the `.mcpb` bundle (MCP Bundle
 | `parseSkillResourceUri()` | skill-discovery.ts | Resolve a `skill://` URI back to a skill + file relpath |
 | `buildSkillIndex()` | skill-discovery.ts | Build the JSON document served at `skill://index.json` |
 | `buildSkillEntry()` | skill-entries.ts | Build a skill's SEP-2640 entry (verbatim frontmatter + `{uri, digest, size}` manifest) |
-| `registerSkillMethods()` | skill-entries.ts | Register `skills/list` and `skills/get` over the live `skillState` |
+| `createSkillsExtension()` | skill-resources.ts | The SDK `SkillsExtension` over a `SkillSource` that reads the live `skillState` |
+| `registerSkillResources()` | skill-resources.ts | Register `skill://index.json` and attach the skills extension to a server |
 | `generateInstructions()` | skill-discovery.ts | Create XML skill list |
 | `getToolDescription()` | skill-tool.ts | Tool desc: usage text (+ skill list in tool-description mode) |
 | `getServerInstructions()` | skill-tool.ts | Server `instructions` for a catalog mode (undefined in tool-description mode) |
@@ -172,26 +173,26 @@ capabilities: {
   tools: { listChanged: !isStatic || toolsMode === "auto" }, // Dynamic tool updates
   resources: { subscribe: true, listChanged: true },
   prompts: { listChanged: !isStatic },    // Dynamic prompt updates (disabled in static mode)
-  extensions: {
-    "io.modelcontextprotocol/skills": {}, // SEP-2640 Skills Extension
-  },
 }
+// plus, declared by SkillsExtension.attach():
+// extensions: { "io.modelcontextprotocol/skills": { directoryRead: true } }
 ```
 
 In static mode (`--static` or `SKILLJACK_STATIC=true`), `prompts.listChanged` is `false`, and so is `tools.listChanged` unless `--tools=auto` (the default). Resource subscriptions remain fully dynamic. Stateless HTTP declares `listChanged: false` for tools, resources and prompts, and `subscribe: false`.
 
 ## Skills extension (SEP-2640)
 
-The server declares `io.modelcontextprotocol/skills` and implements the two methods that declaration requires, using the wire schemas from `@olaservo/ext-skills`:
+The extension is the SDK's `SkillsExtension` (`@modelcontextprotocol/server/ext/skills`, SDK 2.4+). `createSkillsExtension()` in skill-resources.ts builds one over a `SkillSource` whose every method reads the live `skillState`, and `registerSkillResources()` attaches it to each server the stdio and HTTP factories build (one instance per process; `attach` must run before connect). The SDK registers the `skill://{+path}` resource template, the three methods and the capability, validates each entry against the Agent Skills rules, and emits `ttlMs` / `cacheScope` on 2026-07-28 connections. Skilljack merges several directories under per-source prefixes, applies config overrides, dedupes by qualified name and serves edits without a reload, so the entries come from its own `SkillSource` and `skillState` stays the single source of truth.
 
 | Method | Returns |
 |--------|---------|
 | `skills/list` | Paginated entries for every skill in `skillState`, read live on each request. |
 | `skills/get` | The entry for one skill by its `SKILL.md` URI, or `-32602` if none is served there. |
+| `resources/directory/read` | The direct children of a skill root (`skill://<skill-path>`) or a directory below it: subdirectories as `inode/directory`, files with MIME type and size, `SKILL.md` included. `-32602` for a file, a trailing slash or an unknown directory. |
 
 A client that declares the extension in its own capabilities gets no `load-skill` / `skill-resource` tools by default (`--tools=auto`); the instructions catalog lists each skill's `skill://` URI so such a host can confirm it with `skills/get` and load it itself. The skills spec does not require clients to declare the extension, but the base protocol's extension negotiation expects both sides to advertise, and MCP Inspector and MCPJam do.
 
-An entry carries the skill's verbatim `frontmatter` and a complete `resources` manifest: `{uri, digest, size}` for `SKILL.md` and every file `listSkillFiles()` enumerates. That is the same set `resources/list` advertises, and `resources/read` refuses files outside it. Digests are SHA-256 over raw bytes, cached per file by mtime and size. Supporting files over `MAX_FILE_SIZE` are in neither the manifest nor `resources/list`, and `resources/read` answers `-32602` for them, so every listed file is readable. `ttlMs`/`cacheScope` are emitted on 2026-07-28 connections (where the SDK also stamps `resultType: "complete"`) and omitted on 2025-era connections, where `CacheableResult` does not exist; `cachingAttributes()` in skill-entries.ts reads the negotiated version from each request's `_meta` envelope. `resources/directory/read` is not implemented and `directoryRead` is not declared.
+An entry carries the skill's verbatim `frontmatter` and a complete `resources` manifest: `{uri, digest, size}` for `SKILL.md` and every file `listSkillFiles()` enumerates. That is the same set `resources/list` advertises, and `resources/read` refuses files outside it. Digests are SHA-256 over raw bytes, cached per file by mtime and size. Supporting files over `MAX_FILE_SIZE` are in neither the manifest nor `resources/list`, and `resources/read` answers `-32602` for them, so every listed file is readable. `ttlMs`/`cacheScope` are emitted on 2026-07-28 connections (where the SDK also stamps `resultType: "complete"`) and omitted on 2025-era connections, where `CacheableResult` does not exist; the SDK decides from the negotiated version. A skill whose entry breaks the Agent Skills rules (a name that is not lowercase letters, digits and single hyphens, for example) is dropped from `skills/list` with one warning on stderr and answers `-32603` on `skills/get`; the tools and prompts still serve it by name.
 
 **Protocol revisions.** Both transports go through the v2 SDK's era-aware entry points, which decide the revision per connection (stdio) or per request (HTTP) and serve 2026-07-28 and 2025-era clients from the same server definition: stdio is `serveStdio(buildStdioServer)` in index.ts, HTTP is `createMcpHandler(() => buildCoreServer(...))` wrapped with `toNodeHandler()` in http-transport.ts. Do not go back to `new StdioServerTransport()` + `server.connect()` or a hand-built `NodeStreamableHTTPServerTransport`: those pin every connection to 2025-11-25, on which the required caching attributes cannot be sent. The stdio factory may run more than once per process (the SDK discards a `server/discover` probe instance if the client then opens with `initialize`), so it builds a fresh `McpServer` on each call while file watchers and remote polling are wired once per process to the current instance. `src/skill-entries.test.ts` and `src/http-transport.test.ts` connect a 2026-07-28 client (via `serveStdio` over an in-memory pipe, and over real HTTP) and assert the attributes.
 

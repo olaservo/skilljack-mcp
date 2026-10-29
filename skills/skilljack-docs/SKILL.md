@@ -380,20 +380,22 @@ Skills are also accessible via MCP [Resources](https://modelcontextprotocol.io/s
 |-----|---------|
 | `skill://<skill-path>/SKILL.md` | The skill's `SKILL.md` (`text/markdown`). Listed in `resources/list`. |
 | `skill://<skill-path>/<file-path>` | A supporting file inside the skill directory. Listed in `resources/list` at lower priority than `SKILL.md`. |
+| `skill://<skill-path>` and `skill://<skill-path>/<dir>` | A directory (`inode/directory`), readable with `resources/directory/read`. Not listed. |
 | `skill://index.json` | Pre-v1 discovery index (`application/json`), kept for clients written against the draft SEP before `skills/list` replaced it. Listed in `resources/list`. |
 
 A supporting file is served as `text` when its MIME type is a text type and its bytes are valid UTF-8, and as a base64 `blob` otherwise (fonts, PDFs, archives, and text-typed files in another encoding), so what a host receives always hashes to the entry's digest. Only files the skill's entry lists are served; hidden files, symlinks and `node_modules` return `-32602`, as does any URI no skill serves.
 
 ### Skills extension (SEP-2640)
 
-The server declares `io.modelcontextprotocol/skills` in its capabilities and implements the two methods that declaration requires:
+The server declares `io.modelcontextprotocol/skills` with `directoryRead: true` in its capabilities, through the MCP TypeScript SDK's skills extension, and implements:
 
 | Method | Returns |
 |--------|---------|
 | `skills/list` | Paginated entries for every served skill, sorted by URI. Each page resumes after the last URI returned, so a refresh between pages never repeats an entry or shifts the ones that follow. |
 | `skills/get` | The entry for one skill by its `SKILL.md` URI, or `-32602` if no skill is served there. |
+| `resources/directory/read` | The direct children of a skill root or a directory below it, sorted by URI and paginated like `skills/list`; `-32602` for anything that is not a served directory. |
 
-An entry is `{ uri, frontmatter, resources }`: the `SKILL.md` URI, the parsed frontmatter with every field the author wrote, and a complete manifest of `{ uri, digest, size }` for `SKILL.md` and every supporting file, with `sha256:` digests over raw bytes. A host that holds the entry can verify each file it reads and bind user approval to that exact content. `ttlMs` and `cacheScope` appear on 2026-07-28 connections (both transports use the SDK's era-aware entry points, `serveStdio` and `createMcpHandler`) and are omitted on 2025-era connections, where the result type has no such fields. Supporting files over `MAX_FILE_SIZE_MB` are not served and so are not in the manifest. `resources/directory/read` is not implemented and `directoryRead` is not declared.
+An entry is `{ uri, frontmatter, resources }`: the `SKILL.md` URI, the parsed frontmatter with every field the author wrote, and a complete manifest of `{ uri, digest, size }` for `SKILL.md` and every supporting file, with `sha256:` digests over raw bytes. A host that holds the entry can verify each file it reads and bind user approval to that exact content. `ttlMs` and `cacheScope` appear on 2026-07-28 connections (both transports use the SDK's era-aware entry points, `serveStdio` and `createMcpHandler`) and are omitted on 2025-era connections, where the result type has no such fields. Supporting files over `MAX_FILE_SIZE_MB` are not served and so are not in the manifest, nor in a directory read. A skill whose name breaks the Agent Skills naming rule is left out of `skills/list`, with a warning on stderr, and still loads by name through `load-skill` and the prompts.
 
 A client that declares the extension in its own capabilities is expected to load skills this way, so by default it is not offered the `load-skill` / `skill-resource` tools; see `--tools` under [Usage](#skill-tools-and-skills-aware-hosts).
 
