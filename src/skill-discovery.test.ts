@@ -270,6 +270,26 @@ describe("discoverSkills", () => {
     expect(noPrompt!.userInvocable).toBe(false);
     expect(noPrompt!.effectiveUserInvocable).toBe(false);
   });
+
+  it("discovers skills nested inside category directories", () => {
+    const skills = discoverSkills(FIXTURES_DIR);
+    const names = skills.map((s) => s.baseName);
+    expect(names).toContain("nested-skill");
+  });
+
+  it("does not use the category directory name as the skill name", () => {
+    const skills = discoverSkills(FIXTURES_DIR);
+    const names = skills.map((s) => s.baseName);
+    expect(names).not.toContain("category-dir");
+  });
+
+  it("applies source prefix to nested skills the same as top-level skills", () => {
+    const source = createTestSource({ prefix: "my-project" });
+    const skills = discoverSkills(FIXTURES_DIR, source);
+    const nested = skills.find((s) => s.baseName === "nested-skill");
+    expect(nested).toBeDefined();
+    expect(nested!.name).toBe("my-project__nested-skill");
+  });
 });
 
 describe("getResourceAnnotations", () => {

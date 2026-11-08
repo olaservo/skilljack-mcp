@@ -228,7 +228,13 @@ export function discoverSkills(skillsDir: string, source?: SkillSource): SkillMe
     const skillDir = path.join(skillsDir, entry.name);
     const skillMdPath = findSkillMd(skillDir);
 
-    if (!skillMdPath) continue;
+    if (!skillMdPath) {
+      // No SKILL.md — treat as an organisational category directory and recurse.
+      // The spec allows <skill-path> to be nested to arbitrary depth, with
+      // preceding segments as a server-chosen organisational prefix.
+      skills.push(...discoverSkills(skillDir, source));
+      continue;
+    }
 
     try {
       const content = fs.readFileSync(skillMdPath, "utf-8");
