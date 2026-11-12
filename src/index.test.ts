@@ -45,6 +45,24 @@ describe("classifyPaths", () => {
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("Invalid GitHub URL"));
   });
 
+  it("parses prefix= syntax for local dirs — empty prefix suppresses namespace", () => {
+    const result = classifyPaths(["=/path/to/skills"]);
+    expect(result.localDirs).toHaveLength(1);
+    expect(result.localDirPrefixes.get(result.localDirs[0])).toBe("");
+  });
+
+  it("parses prefix= syntax for local dirs — named prefix overrides basename", () => {
+    const result = classifyPaths(["myteam=/path/to/skills"]);
+    expect(result.localDirs).toHaveLength(1);
+    expect(result.localDirPrefixes.get(result.localDirs[0])).toBe("myteam");
+  });
+
+  it("plain local path has no entry in localDirPrefixes (uses basename fallback)", () => {
+    const result = classifyPaths(["/path/to/skills"]);
+    expect(result.localDirs).toHaveLength(1);
+    expect(result.localDirPrefixes.has(result.localDirs[0])).toBe(false);
+  });
+
 });
 
 describe("getStaticMode", () => {

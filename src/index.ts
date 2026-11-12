@@ -116,7 +116,8 @@ function buildDirectorySourceMap(
   cacheDir: string,
   wellKnownSpecs: WellKnownSpec[],
   wellKnownCacheDir: string,
-  bundledDir?: string
+  bundledDir?: string,
+  localDirPrefixes?: Map<string, string>
 ): DirectorySourceMap {
   const map: DirectorySourceMap = {};
 
@@ -125,7 +126,7 @@ function buildDirectorySourceMap(
     const source: SkillSource = {
       type: "local",
       displayName: "Local",
-      prefix: path.basename(dir),
+      prefix: localDirPrefixes?.has(dir) ? localDirPrefixes.get(dir)! : path.basename(dir),
     };
     map[dir] = source;
     // Also map standard subdirectories
@@ -318,15 +319,42 @@ export function getHttpPort(): number | null {
 }
 
 /**
+ * Parse a local directory entry that may carry an explicit prefix override.
+ *
+ * Syntax: `[prefix=]path`
+ *   - `=/path/to/skills`      → prefix "" (no namespace), dir `/path/to/skills`
+ *   - `myteam=/path/to/skills` → prefix "myteam", dir `/path/to/skills`
+ *   - `/path/to/skills`        → no override; prefix auto-derived from basename
+ *
+ * The prefix portion must match `[a-z0-9_-]*` (empty is valid). Anything that
+ * does not contain `=` is treated as a plain path (unchanged behaviour).
+ */
+function parseLocalDirEntry(entry: string): { dir: string; prefix?: string } {
+  const eqIdx = entry.indexOf("=");
+  if (eqIdx === -1) return { dir: entry };
+  const prefix = entry.slice(0, eqIdx);
+  const dir = entry.slice(eqIdx + 1);
+  if (/^[a-z0-9_-]*$/.test(prefix) && dir.length > 0) {
+    return { dir, prefix };
+  }
+  return { dir: entry };
+}
+
+/**
  * Classify paths as local directories, GitHub repositories, or well-known
  * publishers. Detection order: GitHub URL → well-known URL → local path.
+ *
+ * Local paths may carry an explicit prefix override using `[prefix=]path`
+ * syntax (see `parseLocalDirEntry`).
  */
 export function classifyPaths(paths: string[]): {
   localDirs: string[];
+  localDirPrefixes: Map<string, string>;
   githubSpecs: GitHubRepoSpec[];
   wellKnownSpecs: WellKnownSpec[];
 } {
   const localDirs: string[] = [];
+  const localDirPrefixes = new Map<string, string>();
   const githubSpecs: GitHubRepoSpec[] = [];
   const wellKnownSpecs: WellKnownSpec[] = [];
   const wkConfig = getWellKnownConfig();
@@ -347,8 +375,12 @@ export function classifyPaths(paths: string[]): {
         console.error(`Warning: Invalid well-known URL "${p}": ${error}`);
       }
     } else {
-      // Local directory - resolve the path
-      localDirs.push(path.resolve(p));
+      const { dir, prefix } = parseLocalDirEntry(p);
+      const resolved = path.resolve(dir);
+      localDirs.push(resolved);
+      if (prefix !== undefined) {
+        localDirPrefixes.set(resolved, prefix);
+      }
     }
   }
 
@@ -377,6 +409,7 @@ export function classifyPaths(paths: string[]): {
 
   return {
     localDirs: uniqueLocalDirs,
+    localDirPrefixes,
     githubSpecs: uniqueGithubSpecs,
     wellKnownSpecs: uniqueWellKnownSpecs,
   };
@@ -704,7 +737,7 @@ async function main() {
   const allPaths = getActiveDirectories();
 
   // Classify paths as local, GitHub, or well-known
-  const { localDirs, githubSpecs, wellKnownSpecs } = classifyPaths(allPaths);
+  const { localDirs, localDirPrefixes, githubSpecs, wellKnownSpecs } = classifyPaths(allPaths);
 
   // Get GitHub configuration
   const githubConfig = getGitHubConfig();
@@ -816,7 +849,8 @@ async function main() {
     githubConfig.cacheDir,
     currentWellKnownSpecs,
     wellKnownConfig.cacheDir,
-    hasBundledSkills ? bundledSkillsDir : undefined
+    hasBundledSkills ? bundledSkillsDir : undefined,
+    localDirPrefixes
   );
 
   // Log configured directories
@@ -947,6 +981,7 @@ async function main() {
         const newPaths = getActiveDirectories();
         const {
           localDirs: newLocalDirs,
+          localDirPrefixes: newLocalDirPrefixes,
           githubSpecs: newGithubSpecs,
           wellKnownSpecs: newWellKnownSpecs,
         } = classifyPaths(newPaths);
@@ -1031,7 +1066,8 @@ async function main() {
           freshGithubConfig.cacheDir,
           allowedWellKnownSpecs,
           freshWellKnownConfig.cacheDir,
-          hasBundledSkills ? bundledSkillsDir : undefined
+          hasBundledSkills ? bundledSkillsDir : undefined,
+          newLocalDirPrefixes
         );
 
         console.error(`Config changed via UI. Directories: ${currentSkillsDirs.join(", ") || "(none)"}`);
